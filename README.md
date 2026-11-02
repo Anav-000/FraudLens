@@ -1,0 +1,426 @@
+# FraudLens
+
+> “Spot the warning signs. Verify your next step.”
+
+**Author**: Arnav Kumar  
+**Project Type**: Independent Portfolio Project  
+**Current Phase**: Phase 3A — Screenshot Text Extraction & Message Analysis (Offline Verified)
+
+---
+
+## 1. What FraudLens Aims to Do
+
+FraudLens helps everyday users evaluate suspicious communications before sharing sensitive personal details or transferring funds. When users encounter dubious job offers demanding upfront fees, urgent payment requests, phishing messages, or unfamiliar links, FraudLens provides:
+- Clear evidence-linked warning signs and psychological manipulation tactics.
+- Highlighted inconsistencies and factual discrepancies.
+- Verified external reputation context (e.g. domain and URL reputation).
+- Explicit unknowns and areas where evidence is lacking.
+- Practical, safe verification steps the user can take next.
+- Bilingual explanations in English and Hindi.
+- Local screenshot text extraction with human-in-the-loop review.
+
+---
+
+## 2. What Works in Phase 3A
+
+### A. Local Screenshot Text Extraction (Phase 3A)
+- **Local OCR Engine**:
+  - `POST /api/v1/extract/screenshot` extracts text from uploaded screenshots using local Tesseract OCR and Pillow (`PIL`).
+  - **Zero External Transmission of Images**: Screenshot processing runs **100% locally on the backend**. The screenshot image is **never sent to Google Gemini or any external service**.
+- **Separate OCR & Explanation Languages**:
+  - `ocr_language`: Controls optical character recognition (`"eng"` for English, `"hin"` for Hindi).
+  - `language`: Controls downstream AI risk explanation generation (`"en"` or `"hi"`).
+- **Security & Resource Limits**:
+  - **Formats**: Strictly PNG and JPEG (`ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG"}`), verified by Pillow file headers to prevent extension/MIME spoofing.
+  - **File Size**: Maximum 5 MiB (`5 * 1024 * 1024` bytes). Ingested in 64 KiB chunks with early abort (`FILE_TOO_LARGE` HTTP 413).
+  - **Decoded Dimensions**: Maximum 12 megapixels (`12,000,000` pixels). Protected against Pillow decompression bombs (`IMAGE_TOO_LARGE` HTTP 422).
+  - **Static Only**: Multi-frame GIFs, animated PNGs, and multi-frame TIFFs are rejected (`ANIMATED_IMAGE_REJECTED` HTTP 422).
+  - **Subprocess Timeout**: 20-second timeout with explicit child process kill (`proc.kill()` and `await proc.wait()`) preventing orphaned worker processes.
+  - **Concurrency**: Bounded by an `asyncio.Semaphore(3)` to protect CPU resources.
+  - **Resource Cleanup**: In-memory processing; temporary preprocessed files are unconditionally unlinked in `finally:` blocks.
+  - **Character Limits**: Extractions exceeding 10,000 characters are rejected with HTTP 422 `TEXT_TOO_LONG`, instructing the user to crop the screenshot.
+  - **Cache Protection**: `Cache-Control: no-store` on all extraction responses and error responses.
+- **Truthful Capabilities Reporting**:
+  - `GET /api/v1/capabilities` dynamically checks whether Tesseract is installed.
+  - If Tesseract is not installed on the host, it truthfully reports `screenshot_extraction: false` and `ocr_prerequisite_status: "missing_prerequisites"`. Working text analysis is **never** disabled when OCR is unavailable.
+- **Human-in-the-Loop Review Area**:
+  - Accessible dropzone with PNG/JPEG preview, file details, and preview URL revocation (`URL.revokeObjectURL`).
+  - Extracted text is presented in an editable review textarea with prominent warning: *"OCR may misread names, amounts, URLs, or characters."*
+  - Requires user to check `[ ] I have reviewed and confirmed the extracted text for accuracy` before enabling transfer to analysis.
+  - **Review Invalidation**: Modifying the reviewed text automatically unchecks the confirmation box.
+  - Replacing or clearing the screenshot invalidates prior extractions.
+  - Clear provenance badge upon transfer: *"Analysis evaluates the submitted reviewed text only. Findings concern textual content, not image authenticity, visual tampering, sender identity, or URL reputation."*
+
+### B. Suspicious Text Analysis (Phase 2B Baseline)
+- **End-to-End Suspicious Text Analysis**:
+  - Full flow: paste message → select explanation language (`English` or `हिन्दी`) → Analyze Message → validated assessment with quoted evidence, uncertainties, and practical verification steps.
+  - Powered by Google Gemini (`gemini-3.5-flash-lite`) using the official `google-genai` Python SDK.
+  - `POST /api/v1/analyze/text` receives `{ text, language }`, validates length (1–10,000 chars), enforces strict prompt injection isolation, and returns structured findings.
+- **Defensive Prompt & Pipeline Isolation**:
+  - Untrusted user text is isolated inside `<UNTRUSTED_MESSAGE>` payload delimiters.
+  - Instructions are delivered via trusted `types.GenerateContentConfig(system_instruction=...)` directing the model to evaluate the text passively as evidence and ignore any embedded command directives.
+  - External search grounding and tools are explicitly disabled (`tools=None`).
+  - Provider-side developer interaction logging is disabled where supported (`store=False`).
+- **Verbatim Evidence Grounding & Cross-Field Consistency**:
+  - Every cited `evidence_quote` is validated on the backend to be an exact verbatim substring of the submitted text (`quote in submitted_text`); fabricated or non-matching quotes cause immediate rejection (`INVALID_RESPONSE`).
+  - Strict cross-field invariants: `warning_signs_found` requires at least 1 warning sign; `no_clear_warning_signs` and `insufficient_information` strictly require an empty warning signs array.
+  - Requested language matching: The model output's `language` tag must match the requested language.
+- **Plain-Text URLs & Safer Evidence Presentation**:
+  - Quoted evidence strings containing URLs are strictly rendered as plain-text strings in monospace blockquotes, never as clickable HTML links (`<a>` tags).
+- **Nuanced Risk Assessment & Prominent Disclaimers**:
+  - `warning_signs_found`: High-visibility badge, categorized findings, and practical verification steps.
+  - `no_clear_warning_signs`: Slate/neutral badge with a prominent, unmissable notice:
+    > *“Important: This does not prove the message or sender is legitimate. Scammers frequently use subtle, multi-stage, or tailored communications that appear harmless in isolation.”*
+  - `insufficient_information`: Cautionary badge indicating that message text lacks context to evaluate safety.
+- **Application Provenance & Limitations**:
+  - Every response explicitly notes `analysis_basis="submitted_text_only"`, `external_checks_performed=False`, and provides a clear limitation notice stating that AI analysis does not constitute legal or cybersecurity advice.
+  - `Cache-Control: no-store` header is enforced on all analysis endpoints.
+- **Client Resilience & Controls**:
+  - Input preservation: User text is preserved across network retries and error conditions.
+  - Loading feedback: Spinners and status indicators without misleading fake progress percentages.
+  - Duplicate prevention: Analyze button is disabled while an analysis request is in flight.
+  - Request aborting: Clear / Reset aborts in-flight requests via `AbortController` and resets UI state. *(Note: browser-side abort does not guarantee remote provider cancellation).*
+  - Stale detection: Modifying text or switching language while viewing a previous result flags the card as stale until re-evaluated.
+- **Live Analysis Status**:
+  - Autonomous implementation was completed using comprehensive offline test mocks. **Live text analysis status: NOT RUN.** Manual verification instructions and a fictional-data checklist are provided below.
+
+---
+
+## 3. Selected AI Model & Documentation Sources
+
+- **Provider**: Google Gemini API (`AI_PROVIDER=gemini`)
+- **SDK**: Official `google-genai` Python SDK (`google-genai>=2.0.0,<3.0.0`, installed `2.33.0`)
+- **Selected Model ID**: `gemini-3.5-flash-lite`
+  - *Models Documentation*: https://ai.google.dev/gemini-api/docs/models
+  - *Structured Outputs Documentation*: https://ai.google.dev/gemini-api/docs/structured-output
+  - *Dynamic Rate Limits Console*: https://aistudio.google.com/rate-limit
+  - *Terms of Service*: https://ai.google.dev/gemini-api/terms
+- **Historical Candidate & Investigation (`gemini-3.8-flash`)**:
+  - Phase 2A was initially prepared against `gemini-3.8-flash`.
+  - Live smoke testing with `gemini-3.8-flash` returned HTTP 504 `DEADLINE_EXCEEDED` (~30s) and HTTP 503 `UNAVAILABLE` (6.29s) under `generate_content`, and client timeouts (~61s) under `interactions.create`.
+  - Standalone transport diagnostics confirmed that exactly 1 transport attempt was made with zero unintended retries.
+  - While AI Studio playground returned Hello, API gateway calls to `gemini-3.8-flash` consistently failed. The root cause remains **unknown / unconfirmed** (potential gateway queue delays, model provisioning latency, or capacity constraints on the free-tier developer endpoint).
+  - Transitioning to **`gemini-3.5-flash-lite`** resolved the issue immediately with successful live responses.
+- **Model Configurability**: Configurable via `AI_MODEL` in `backend/.env`. The application will never silently switch models.
+
+---
+
+## 4. Free Tier & Data Privacy Boundary
+
+- **Dynamic Quotas**: Free tier quotas and rate limits are managed dynamically per project by Google AI Studio. Check your active limits directly in the [Google AI Studio Rate Limit page](https://aistudio.google.com/rate-limit).
+- **Fictional Data Only**: On the Google AI Studio Free Tier, prompts and outputs may be processed by Google for service improvements and reviewed by human annotators. **Never submit real, sensitive personal evidence on the free tier.**
+- **Storage Setting (`store=False`)**: The adapter sets `store=False` in `GenerateContentConfig` to opt out of developer-owned interaction logging in Google AI Studio project history where supported.
+- **No Zero Retention Guarantee**: Setting `store=False` does **not** provide zero data retention (ZDR) and does not override Google's safety/abuse monitoring or free-tier service terms. Strict Zero Data Retention is an enterprise compliance feature available on Google Cloud Vertex AI, not the standard Gemini Developer API.
+
+---
+
+## 5. Local Setup & Secret Entry Instructions (Windows PowerShell)
+
+> **Important**: Never paste your API key into chat or shell command lines. Keep it strictly in your local `backend/.env` file.
+
+### Step 1: Environment Configuration
+
+Create `backend\.env` from `backend\.env.example` only if it does not already exist:
+
+```powershell
+if (-not (Test-Path backend\.env)) {
+    Copy-Item backend\.env.example backend\.env
+}
+```
+
+### Step 2: Open and Edit in Notepad
+
+Open the backend `.env` file in Notepad:
+
+```powershell
+notepad.exe backend\.env
+```
+
+Inside Notepad, set these values:
+- `AI_PROVIDER=gemini`
+- `AI_MODEL=gemini-3.5-flash-lite`
+- `AI_API_KEY=YOUR_ACTUAL_GEMINI_KEY_HERE`
+
+Preserve the existing `ALLOWED_ORIGINS` setting:
+```env
+ENVIRONMENT=development
+ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+AI_PROVIDER=gemini
+AI_MODEL=gemini-3.5-flash-lite
+AI_API_KEY=YOUR_ACTUAL_GEMINI_KEY_HERE
+```
+
+Save the file (`Ctrl + S`) and close Notepad.
+
+*(Git is verified to ignore `backend/.env`; it will not be committed or tracked).*
+
+---
+
+### Step 3: (Optional) Install Tesseract-OCR for Screenshot Text Extraction (Phase 3A)
+
+Screenshot text extraction executes locally on the backend using Tesseract OCR.
+If Tesseract is not installed, FraudLens continues to work normally for direct text pasting, and truthfully reports `screenshot_extraction: false` in `GET /api/v1/capabilities`.
+
+To enable screenshot text extraction on Windows:
+1. Download the official installer from UB-Mannheim:
+   https://github.com/UB-Mannheim/tesseract/wiki
+2. Run the installer (e.g. `tesseract-ocr-w64-setup-5.5.0.exe`).
+3. Under **Components to install**, expand **Additional language data (download)** and check **Hindi**.
+4. Complete installation to the default path: `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+5. *(Optional)* If installed to a non-standard directory, add this line in `backend/.env`:
+   ```env
+   TESSERACT_CMD=D:\CustomPath\Tesseract-OCR\tesseract.exe
+   ```
+6. Verify in PowerShell:
+   ```powershell
+   & "C:\Program Files\Tesseract-OCR\tesseract.exe" --version
+   & "C:\Program Files\Tesseract-OCR\tesseract.exe" --list-langs
+   ```
+
+---
+
+### Step 4: Run the Synthetic Smoke Test (CLI)
+
+Before starting the web server, run the synthetic smoke test from the `backend` directory to verify your key and model connectivity:
+
+```powershell
+Set-Location D:\FraudLens\backend
+.\.venv\Scripts\python.exe -m scripts.check_gemini
+```
+
+Verified live output:
+```text
+==================================================
+FraudLens — Synthetic Gemini Connectivity Verification
+==================================================
+Provider: gemini
+Model ID: gemini-3.5-flash-lite
+--------------------------------------------------
+Result: SUCCESS
+Elapsed Time: 1.80s
+Schema Validation: PASSED (Devanagari Script: Yes)
+Harmless Synthetic Output:
+  English: Hello! How can I help you today?
+  Hindi:   नमस्ते! मैं आज आपकी क्या मदद कर सकता हूँ?
+--------------------------------------------------
+Note: Hindi script detection confirms format presence, not translation quality.
+Connectivity check complete. No user evidence was submitted or retained.
+```
+
+- **Live Plain-Text Diagnostic**: Also verified via `.\.venv\Scripts\python.exe -m scripts.diagnose_raw_gemini` (`SUCCESS`, 3.65s elapsed).
+- **Separation of Concerns**: CLI verification (`check_gemini.py`) validates the Gemini API key, adapter configuration, and structured output parsing out-of-band. The running backend endpoint `GET /api/v1/capabilities` intentionally continues to report `ai_connection="not_tested"` at server runtime; it does not claim a live connection until live text analysis is executed.
+- **Text Analysis Status**: Text analysis is active in Phase 2B (`POST /api/v1/analyze/text`), supported by strict evidence grounding, defensive prompt isolation, and 8 safe diagnostic reason codes.
+
+---
+
+### Step 4: Backend Startup
+
+In a **dedicated PowerShell terminal**:
+
+```powershell
+Set-Location D:\FraudLens\backend
+..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+---
+
+### Step 5: Frontend Startup
+
+In a **second PowerShell terminal**:
+
+```powershell
+Set-Location D:\FraudLens\frontend
+node .\node_modules\vite\bin\vite.js --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Open `http://127.0.0.1:5173` in your browser.
+
+---
+
+## 6. Running Verification Commands
+
+### Backend Verification (pytest)
+In a PowerShell terminal from the project root:
+```powershell
+.\backend\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests -v
+```
+
+**Result**: 147 passed tests covering:
+- Health response contract (`GET /api/v1/health`).
+- Capabilities reporting (`GET /api/v1/capabilities`) for text analysis and OCR prerequisites.
+- Secret masking (`ai_api_key` never exposed).
+- Strict validation (blank text, character limit, language restrictions, extra field rejection).
+- Validation error sanitization (markers never echoed).
+- Text analysis routing, exact evidence substring validation, and cross-field invariants.
+- 8 safe output diagnostic reason codes and provider request rejection handling.
+- Gemini adapter missing key / placeholder rejection.
+- Real SDK configuration object verification (`HttpOptions`, `GenerateContentConfig`, `store=False`, `attempts=1`, `aclose()`).
+- OCR image validation (PNG, JPEG, extension/MIME spoofing, max 5 MiB file size, max 12 MP decoded limits, multi-frame/animated rejection, decompression-bomb defense).
+- OCR dual event loop compatibility (Windows `_WindowsSelectorEventLoop` under Uvicorn `--reload` and `ProactorEventLoop`), worker thread fallback, process kill and reaping on timeout, and temporary file unlinking.
+- Real local OCR endpoint execution (`POST /api/v1/extract/screenshot`) and outbound network isolation (zero Gemini calls during OCR).
+
+### Frontend Verification (Vitest, Lint, TypeScript, Build)
+In a PowerShell terminal inside `frontend`:
+```powershell
+Set-Location frontend
+
+# 1. Run unit tests with Vitest & React Testing Library
+npm test
+
+# 2. Run TypeScript strict type-checking
+npx tsc -b
+
+# 3. Run ESLint code quality checks
+npm run lint
+
+# 4. Run production bundle build
+npm run build
+```
+
+**Results (Phase 3A Final)**:
+- **Backend Tests (pytest)**: 147 tests passed in 21.80s.
+- **Frontend Tests (Vitest)**: 40 tests passed in 26.37s.
+- **TypeScript (tsc -b)**: 0 errors.
+- **ESLint**: 0 errors, 0 warnings.
+- **Vite build**: production bundle created successfully in `dist/` (181.36 kB JS, 19.98 kB CSS).
+
+---
+
+## 7. Application Startup Instructions (Windows PowerShell)
+
+To start both services locally:
+
+### Terminal 1: Start Backend (FastAPI)
+```powershell
+Set-Location D:\FraudLens\backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### Terminal 2: Start Frontend (Vite)
+```powershell
+Set-Location D:\FraudLens\frontend
+node .\node_modules\vite\bin\vite.js --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Once running, navigate to `http://127.0.0.1:5173` in your browser.
+
+---
+
+## 8. Manual Testing Checklist (Fictional Data Only)
+
+> **Important**: Never submit real, sensitive personal data or active banking information. Use only synthetic or fictional test examples.
+
+### Example 1: Advance-Fee Remote Job Offer
+- **Input Text**:
+  > “Congratulations! You have been selected for a remote Data Entry position paying $45/hour. To secure your onboarding kit and software license, please transfer a refundable registration deposit of $150 to registration@example.invalid immediately.”
+- **Language**: English
+- **Expected Assessment**: `warning_signs_found`
+- **Qualitative Expectations**:
+  - Badge: "Warning Signs Detected"
+  - Category: Job / Employment Offer
+  - Warning Signs: Highlighting the advance fee deposit ($150) and unrealistic pay/selection urgency.
+  - Quoted Evidence: Exact quote from text formatted as plain text (no clickable links).
+  - Practical Verification Steps: Directing the user to check the employer's official careers portal and never pay for a job offer.
+
+### Example 2: OTP / Account Suspension Phishing
+- **Input Text**:
+  > “URGENT: Your Apex Bank card is suspended due to unusual activity. Avoid permanent closure by verifying your PIN and OTP immediately at https://apexbank-security-verify.example.invalid/login.”
+- **Language**: English or हिन्दी
+- **Expected Assessment**: `warning_signs_found`
+- **Qualitative Expectations**:
+  - Badge: "Warning Signs Detected"
+  - Category: Phishing / Impersonation
+  - Warning Signs: Highlighting urgency and the request for sensitive credentials/OTP.
+  - Plain-Text URL: The URL `https://apexbank-security-verify.example.invalid/login` must appear as a monospace plain text quote, NOT a clickable link.
+  - Practical Verification Steps: Advise calling the phone number on the back of the physical bank card.
+
+### Example 3: Routine Meeting Reminder (No Red Flags)
+- **Input Text**:
+  > “Hi team, just a reminder that our weekly project sync is scheduled for tomorrow at 10:00 AM in Conference Room B. Please review the shared slides before the meeting.”
+- **Language**: English
+- **Expected Assessment**: `no_clear_warning_signs`
+- **Qualitative Expectations**:
+  - Badge: "No Clear Warning Signs Found"
+  - Prominent Cautionary Notice:
+    > *“Important: This does not prove the message or sender is legitimate. Scammers frequently use subtle, multi-stage, or tailored communications that appear harmless in isolation.”*
+  - Zero warning signs displayed.
+  - Guidance suggesting standard verification via known channels if unsolicited.
+
+---
+
+## 9. Manual Screenshot Test Checklist (Phase 3A)
+
+When Tesseract OCR is installed on the host, use this checklist to verify the screenshot workflow:
+
+1. **PNG Selection & Preview**:
+   - Select a valid PNG screenshot ($\le 5$ MiB).
+   - Verify local preview thumbnail renders with filename and file size.
+   - Verify preview URL is cleaned up if "Remove" is clicked.
+2. **Local Extraction (Zero Google Calls)**:
+   - Select OCR language (`EN (eng)` or `HI (hin)`).
+   - Click "Extract Text".
+   - Confirm extraction finishes locally without network activity to Google.
+3. **Editable Review Area**:
+   - Verify extracted text appears in the editable textarea with character counter.
+   - Verify notice: *"OCR may misread names, amounts, URLs, or characters."*
+   - Verify "Use Reviewed Text for Analysis" is disabled until `[x] I have reviewed and confirmed the extracted text for accuracy` is checked.
+4. **Review Invalidation**:
+   - Check the confirmation box.
+   - Edit any character in the textarea.
+   - Verify the confirmation box automatically unchecks and transfer is disabled.
+5. **Transfer to Analysis**:
+   - Re-check the confirmation box and click "Use Reviewed Text for Analysis".
+   - Verify text is transferred to the main analysis textarea.
+   - Verify the "Screenshot Text Provenance Notice" badge appears.
+   - Click "Analyze Message" to run Gemini analysis on the exact reviewed text.
+6. **Error Handlers**:
+   - Try uploading a `.txt` file or corrupt image: verify `INVALID_IMAGE` error.
+   - Try uploading an image $> 5$ MiB: verify `FILE_TOO_LARGE` error.
+
+---
+
+## 10. Troubleshooting
+
+### 1. Missing or Placeholder Key Error
+If the backend returns HTTP 503 `AI_CONFIGURATION_MISSING`:
+- Open `backend\.env` in Notepad and verify `AI_PROVIDER=gemini` and `AI_API_KEY` contains your real key starting with `AIza...`.
+
+### 2. Authentication Failed (401/403)
+If the backend returns HTTP 503 `AI_AUTH_FAILED`:
+- Check that the key copied from Google AI Studio is active and has no trailing spaces or expired project permissions.
+
+### 3. Model Unavailable (404)
+If the backend returns HTTP 503 `AI_MODEL_UNAVAILABLE`:
+- Verify that `AI_MODEL=gemini-3.5-flash-lite` in `backend/.env`.
+
+### 4. Quota Exceeded (429)
+If the backend returns HTTP 429 `AI_QUOTA_EXCEEDED`:
+- The project has reached its free-tier rate limits. Check the [Google AI Studio Rate Limit page](https://aistudio.google.com/rate-limit).
+
+### 5. Local OCR Unavailable (HTTP 503 `OCR_UNAVAILABLE`)
+If screenshot extraction reports that Tesseract is not installed:
+- Install Tesseract-OCR (v5.x) on Windows and ensure `tesseract.exe` is in PATH or specify `TESSERACT_CMD` in `backend/.env`.
+- Text analysis remains fully operational by pasting text directly into the form.
+
+### 6. OCR Language Not Installed (HTTP 503 `OCR_LANGUAGE_NOT_INSTALLED`)
+If Hindi OCR extraction fails:
+- Ensure `hin.traineddata` was selected during installation or placed into Tesseract's `tessdata` folder (`C:\Program Files\Tesseract-OCR\tessdata`).
+
+### 7. File Too Large (HTTP 413 `FILE_TOO_LARGE`)
+If screenshot extraction fails with size limits:
+- Screenshots must be $\le 5$ MiB. Crop the image to focus on the suspicious message area before uploading.
+
+### 8. Occupied Port (8000 or 5173)
+If port 8000 or 5173 is already in use by another service:
+- Check what process is using the port:
+  ```powershell
+  Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue
+  ```
+- If you need to run the backend on port 8001:
+  ```powershell
+  ..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+  ```
+- Update `frontend/.env`:
+  ```env
+  VITE_API_BASE_URL=http://127.0.0.1:8001
+  ```

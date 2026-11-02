@@ -1,0 +1,37 @@
+from .gemini import GeminiAdapter, GeminiAdapterError, GeminiErrorCode
+from .ocr import (
+    OcrService,
+    OcrServiceError,
+    FileTooLargeError,
+    InvalidImageError,
+    ImageTooLargeError,
+    AnimatedImageError,
+    OcrUnavailableError,
+    OcrLanguageNotInstalledError,
+    EmptyExtractionError,
+    TextTooLongError,
+    OcrTimeoutError,
+    OcrExecutionError,
+    check_ocr_availability,
+    find_tesseract_binary,
+)
+
+__all__ = [
+    "GeminiAdapter",
+    "GeminiAdapterError",
+    "GeminiErrorCode",
+    "OcrService",
+    "OcrServiceError",
+    "FileTooLargeError",
+    "InvalidImageError",
+    "ImageTooLargeError",
+    "AnimatedImageError",
+    "OcrUnavailableError",
+    "OcrLanguageNotInstalledError",
+    "EmptyExtractionError",
+    "TextTooLongError",
+    "OcrTimeoutError",
+    "OcrExecutionError",
+    "check_ocr_availability",
+    "find_tesseract_binary",
+]
