@@ -1,6 +1,7 @@
 import {
   BackendCheckResult,
   CapabilitiesResponse,
+  DocumentExtractionResponse,
   HealthResponse,
   Language,
   OcrLanguage,
@@ -258,4 +259,66 @@ export async function extractScreenshot(
   }
 
   return responseData as ScreenshotExtractionResponse;
+}
+
+export async function extractDocument(
+  file: File,
+  signal?: AbortSignal
+): Promise<DocumentExtractionResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetchWithTimeout(
+    "/api/v1/extract/document",
+    {
+      method: "POST",
+      body: formData,
+    },
+    EXTRACTION_REQUEST_TIMEOUT_MS,
+    signal
+  );
+
+  const responseData: Record<string, any> | null = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    let message = `Document extraction failed with HTTP ${res.status}.`;
+    let code: string | undefined;
+    let reason: string | undefined;
+    let action: string | undefined;
+
+    if (responseData && typeof responseData === "object") {
+      if (typeof responseData.message === "string" && responseData.message.trim()) {
+        message = responseData.message.trim();
+      }
+      if (typeof responseData.code === "string" && responseData.code.trim()) {
+        code = responseData.code.trim();
+      }
+      if (typeof responseData.reason === "string" && responseData.reason.trim()) {
+        reason = responseData.reason.trim();
+      }
+      if (typeof responseData.action === "string" && responseData.action.trim()) {
+        action = responseData.action.trim();
+      }
+    }
+
+    throw new ApiClientError(
+      message,
+      false,
+      false,
+      code,
+      action,
+      res.status,
+      reason
+    );
+  }
+
+  if (
+    !responseData ||
+    typeof responseData !== "object" ||
+    typeof responseData.combined_text !== "string"
+  ) {
+    throw new ApiClientError("Backend returned an invalid document extraction response format.");
+  }
+
+  return responseData as DocumentExtractionResponse;
 }

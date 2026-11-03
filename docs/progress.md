@@ -392,21 +392,68 @@ User-executed manual checks confirmed:
 
 ---
 
-### 4. Actual Verification Results (Phase 3A Final)
+## Phase 3B: Text-Based PDF Document Extraction
 
-| Suite | Scope | Target | Result | Status |
-|---|---|---|---|---|
-| **Backend Tests** | `pytest` | 147 tests across 7 test files: Health, Capabilities, Text Analysis, Gemini Adapter, Diagnostics, OCR Preprocessing & Validation (PNG, JPEG, spoofing, oversize, >12 MP pixel limits, animated/multi-frame, decompression bombs), Windows Selector Loop Subprocess Fallback, Subprocess Timeout Termination, Non-blocking Cancellation & Thread Runner Reaping, Repeated Cancellation Shielding, Semaphore Contention & Slot Ownership, Pre-Spooling Request Bounding (`BoundedUploadMiddleware`), Streamed Oversized Abort, Misleading/Absent Content-Length, SpooledTemporaryFile Cleanup on Stream Abort, Excess Multipart Parts, Unexpected Fields, Multi-File Rejection, Temp File Cleanup, Real Local OCR with synthetic drawing, Extraction API, Outbound Network Isolation | **147 passed, 0 failed** in 21.80s | **PASS** |
-| **Frontend Tests** | `vitest` + RTL | 40 tests across 4 test suites: API client extraction & error parsing, `ScreenshotExtractor` (file drop, preview, size check, format check, OCR status, review confirmation gating, review invalidation on edit, language change extraction invalidation, in-flight cancellation on language/file change, late-response guard preventing edit overwrites, URL revocation on reset/unmount), `App` integration (transfer of reviewed text, provenance notice, submission of exact text, stale-state marking after screenshot transfer, zero AI calls during transfer), Analysis results, Header copy & planned labels | **40 passed, 0 failed** in 26.37s | **PASS** |
-| **Type Checking** | `tsc -b` | Strict TypeScript types across all frontend components, types, and test files | **0 errors** | **PASS** |
-| **Linting** | `eslint .` | ESLint v9 with strict TypeScript and React Hooks rules | **0 errors, 0 warnings** | **PASS** |
-| **Production Build** | `vite build` | Production bundle generation and minification | **Built in 2.17s** (181.20 kB JS, 19.98 kB CSS) | **PASS** |
-| **Real Local OCR HTTP Verification** | HTTP Endpoint | Fictional screenshot `Screenshot 2026-11-02 152123.png` through `POST /api/v1/extract/screenshot` | **HTTP 200 OK**: Extracted exact 152 characters | **PASS** |
+**Status**: Phase 3B Complete & Verified  
+**Milestone Completion Date**: 2026-11-03  
+
+### 1. Scope & Implementation Overview
+
+#### A. Local PDF Text Extraction Architecture
+- **Library Selection**: Adopted **`pypdf`** (`pypdf>=5.0.0,<6.0.0`, version 5.9.0, BSD-3-Clause license). Maintained pure-Python library with zero native compilation dependencies.
+- **Privacy Boundary**: Document parsing runs **100% locally on the backend server**. The PDF document is **never** sent to Google Gemini or external services.
+- **Isolated Worker Process Execution**:
+  - Untrusted PDF parsing runs in an independent child process (`app.services.pdf_worker`) managed by `_SyncDocumentRunner`.
+  - Guarantees: Timeouts (20.0s) and cancellations forcibly kill the worker process (`proc.kill()`) and reap it via `proc.wait()`.
+  - Non-blocking `cancel()` does not stall the asyncio event loop on Windows with Uvicorn `--reload`.
+  - Shielded cleanup ensures the worker process is completely reaped before releasing the concurrency slot or unlinking temporary files.
+  - Concurrency: Document extraction uses `_document_semaphore = asyncio.Semaphore(3)`, operating independently from OCR's `_ocr_semaphore = asyncio.Semaphore(3)`. Up to 3 OCR workers and 3 PDF workers (up to 6 extraction subprocesses total) can execute concurrently.
+- **Resource Limits & Memory Defense**:
+  - **File Size**: 5 MiB maximum (`5 * 1024 * 1024` bytes). Pre-spool bounded upload middleware rejects oversized uploads before disk spooling.
+  - **Document Length**: 10 pages maximum (`MAX_DOCUMENT_PAGES = 10`). Documents exceeding 10 pages are rejected with HTTP 422 `PAGE_LIMIT_EXCEEDED` (never silently truncated).
+  - **Extracted Text Limit**: 10,000 characters maximum (`MAX_EXTRACTED_CHARACTERS = 10_000`). Exceeding text is rejected with HTTP 422 `TEXT_TOO_LONG`.
+  - **Enforceable Memory Limit**: Windows Job Objects enforce a 256 MiB virtual memory ceiling per worker process on Windows before untrusted PDF parsing starts. Exceeding this triggers `MemoryError` safely mapped to `DOCUMENT_EXTRACTION_FAILED`. Best-effort RLIMIT_AS applies on POSIX if available.
+  - **Bounded I/O & Output Size**: Child `stdout` and `stderr` are discarded via `subprocess.DEVNULL`. Worker output JSON is checked and restricted to $\le 1$ MiB (`MAX_WORKER_RESULT_BYTES = 1024 * 1024`) both before worker write and before parent read/decode.
+  - **Security Restrictions**: Pure-Python reader does not execute PDF JavaScript, does not open embedded file attachments, does not follow external links/URIs, and does not render visual raster graphics.
+  - **Encryption**: Encrypted / password-protected PDFs are rejected with safe, actionable error `ENCRYPTED_PDF_REJECTED` (HTTP 422). Passwords are not accepted in this phase.
+- **Handling Pages Without Extractable Text**:
+  - If the entire document has no usable text: rejected with HTTP 422 `EMPTY_DOCUMENT_EXTRACTION`, explaining that scanned or image-only PDFs are not supported.
+  - If only some pages have no text: returns structured page information, collects `empty_pages`, and includes a calibrated warning that extraction may be incomplete. Does not claim every empty page is necessarily scanned.
+
+#### B. Frontend Document Extraction & Review Workflow
+- **`DocumentExtractor` Component**:
+  - PDF-only file dropzone and picker accepting `.pdf` / `application/pdf`.
+  - Displays plain-text filename and human-readable file size.
+  - Prominent limit notice: Max 5 MiB, Max 10 pages.
+  - Explicit "Extract Text" button with loading spinner and cancellation support.
+  - Incomplete extraction warning banner identifying empty page numbers.
+  - Editable review textarea with character counter.
+  - Review explanation notice:
+    > *"Extraction can alter reading order, spacing, and characters, and may omit content. Confirmation is an opportunity to correct errors, not a guarantee of accuracy."*
+  - Local privacy notice explaining that the PDF stays on the backend and only reviewed text is sent to the AI provider upon Analyze.
+  - Review confirmation checkbox: `[ ] I have reviewed and confirmed the extracted text for accuracy.`
+  - Invalidation on edit: modifying textarea unchecks confirmation immediately (`userHasEditedRef` guard prevents late responses from overwriting user edits).
+  - Explicit confirmation before replacing nonempty analysis input: shows prompt asking user to confirm before overwriting existing message text.
+  - Document text provenance notice displayed on analysis form:
+    > *"Document Text Provenance Notice: Analysis evaluates the submitted reviewed text only. Findings concern textual content, not document authenticity, signatures, visual tampering, sender identity, or URL reputation."*
 
 ---
 
-### 5. Documented System Limitations (Phase 3A)
-1. **Single Screenshot Image Only**: Supported formats are strictly static PNG and JPEG ($\le 5$ MiB, $\le 12$ megapixels). Multi-page documents, PDFs, Word documents, and animated media are not supported and are rejected.
-2. **Text Content Only**: FraudLens evaluates textual patterns present in the submitted text. It does not inspect visual screenshot artifacts, font rendering, graphic tampering, image steganography, sender logos, or image authenticity.
-3. **No External URL Reputation / WHOIS Checks**: URLs cited in evidence are treated as textual strings. FraudLens does not perform active network probes, DNS lookups, domain registration age checks, or external reputation API queries.
-4. **Local Host Dependency**: Local OCR requires a host Tesseract-OCR installation with requisite language packs (`eng`, `hin`). When missing, the application truthfully reports `screenshot_extraction: false`, and users continue analyzing suspicious messages by pasting text directly.
+### 2. Actual Verification Results (Phase 3B Final)
+
+| Suite | Scope | Target | Result | Status |
+|---|---|---|---|---|
+| **Backend Tests** | `pytest` | 167 tests across 8 test files: Health, Capabilities, Text Analysis, Gemini Adapter, Diagnostics, OCR Preprocessing, Dual Event Loops, Non-blocking Cancellation, Streamed Multipart Oversize Abort, Spool Cleanup, Excess Parts, Document Service & Worker (Single-page, Multipage, Hindi Unicode UTF-16BE, Empty doc, Mixed pages, Corrupt PDF, Encrypted PDF, 10-page limit, 10,000-char limit, Worker timeout termination, Reaping, Concurrency slot ownership, Delayed worker creation responsiveness, Repeated cancellation shielding, Outbound network isolation) | **167 passed, 0 failed** in 20.65s | **PASS** |
+| **Frontend Tests** | `vitest` | 49 tests across 5 test suites: API Client (`extractDocument`), `DocumentExtractor` (PDF drop, validation, size check, format check, incomplete extraction warning, review confirmation gating, edit invalidation, late response discard, nonempty input replace confirmation), `ScreenshotExtractor`, `AnalysisResultView`, `App` Integration (Document text transfer, Document provenance notice, stale-state marking, zero AI calls during transfer) | **49 passed, 0 failed** in 19.70s | **PASS** |
+| **Type Checking** | `tsc -b` | Strict TypeScript compilation across all frontend components, types, and tests | **0 errors** | **PASS** |
+| **Linting** | `eslint .` | ESLint v9 with strict TypeScript and React Hooks rules | **0 errors, 0 warnings** | **PASS** |
+| **Production Build** | `vite build` | Production bundle generation and minification | **Built in 2.18s** (195.56 kB JS, 23.55 kB CSS) | **PASS** |
+| **Real Local HTTP PDF Extraction** | HTTP Endpoint | Synthetic fixture `job_offer_notice.pdf` through `POST /api/v1/extract/document` | **HTTP 200 OK**: Extracted 161 characters, `Cache-Control: no-store` | **PASS** |
+
+---
+
+### 3. Documented System Limitations (Phase 3B)
+1. **Text-Based PDFs Only**: Only text-based PDF documents ($\le 5$ MiB, $\le 10$ pages) with usable embedded text encodings are supported. Scanned PDFs, scanned documents, Word documents (`.doc`/`.docx`), archives, and batch uploads are not supported.
+2. **Text Content Only**: FraudLens evaluates textual patterns present in the reviewed text. It does not inspect visual layout, font styling, digital signatures, embedded attachments, or document authenticity.
+3. **No External URL Reputation / WHOIS Checks**: URLs cited in evidence are treated strictly as textual strings. FraudLens does not perform active network probes, DNS lookups, domain registration age checks, or external reputation API queries.
+4. **Scanned PDF Guidance**: Scanned PDFs contain pixel images rather than character streams; users with scanned document images should take a screenshot and use Screenshot Text Extraction.

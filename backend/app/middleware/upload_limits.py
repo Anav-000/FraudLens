@@ -41,11 +41,16 @@ class BoundedUploadMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Apply strict body bounds to extraction upload route
+        # Apply strict body bounds to extraction upload routes (screenshot and document)
         path = scope.get("path", "")
         method = scope.get("method", "GET").upper()
-        if method == "POST" and path == "/api/v1/extract/screenshot":
+        if method == "POST" and path in ("/api/v1/extract/screenshot", "/api/v1/extract/document"):
             headers = Headers(scope=scope)
+            action_text = (
+                "Compress, crop, or resize the screenshot before uploading."
+                if "screenshot" in path
+                else "Compress or split the PDF document before uploading."
+            )
 
             # 1. Check explicit Content-Length header
             content_length_header = headers.get("content-length")
@@ -61,7 +66,7 @@ class BoundedUploadMiddleware:
                                     f"Request payload of {content_length:,} bytes exceeds the maximum "
                                     f"allowed size limit of 5 MiB (with 64 KiB multipart overhead)."
                                 ),
-                                "action": "Compress, crop, or resize the screenshot before uploading.",
+                                "action": action_text,
                             },
                             headers={"Cache-Control": "no-store"},
                         )
@@ -103,7 +108,7 @@ class BoundedUploadMiddleware:
                                 "Streamed request body exceeded the maximum allowed size limit of "
                                 "5 MiB (with 64 KiB multipart overhead)."
                             ),
-                            "action": "Compress, crop, or resize the screenshot before uploading.",
+                            "action": action_text,
                         },
                         headers={"Cache-Control": "no-store"},
                     )

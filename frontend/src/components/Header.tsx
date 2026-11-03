@@ -16,15 +16,20 @@ export const Header: React.FC = () => {
               “Spot the warning signs. Verify your next step.”
             </p>
           </div>
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-800 border border-teal-200 w-fit">
-            Text Analysis Active
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-800 border border-teal-200 w-fit">
+              Text Analysis Active
+            </span>
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-800 border border-teal-200 w-fit">
+              PDF Text Extraction Available
+            </span>
+          </div>
         </div>
         <p className="mt-3 text-sm text-slate-600 max-w-3xl leading-relaxed">
           FraudLens provides evidence-linked analysis for suspicious text messages (SMS, chat messages, emails, and job offers) to identify concrete warning signs and safe verification steps before sharing sensitive details or sending funds.
         </p>
         <p className="mt-1 text-xs text-slate-500 italic">
-          Document parsing and external URL reputation checks are planned capabilities and not currently available.
+          Text-based PDF extraction is available. Scanned-PDF OCR, Word document parsing (.docx), and external URL reputation checks are planned capabilities and not currently available.
         </p>
       </div>
     </header>

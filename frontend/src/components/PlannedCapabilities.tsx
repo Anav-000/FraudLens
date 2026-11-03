@@ -35,12 +35,12 @@ export const PlannedCapabilities: React.FC = () => {
               Local Extraction
             </span>
             <span className="text-[10px] font-bold uppercase tracking-wider bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded">
-              Phase 3A
+              Phase 3A / 3B
             </span>
           </div>
-          <h3 className="text-sm font-semibold text-slate-800">Screenshot Text Extraction</h3>
+          <h3 className="text-sm font-semibold text-slate-800">Screenshots & Text PDFs</h3>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Local OCR text extraction from single PNG/JPEG screenshots with human-in-the-loop review before analysis. External URL reputation and document parsing remain planned.
+            Local OCR text extraction from single PNG/JPEG screenshots and embedded-text extraction from text-based PDFs with human-in-the-loop review. Word docs, scanned-document OCR, and external URL reputation remain planned.
           </p>
         </div>
 

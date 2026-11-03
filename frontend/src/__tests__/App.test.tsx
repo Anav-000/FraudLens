@@ -432,8 +432,9 @@ describe("FraudLens App Component", () => {
     });
 
     expect(screen.getByText(/Text Analysis Active/i)).toBeInTheDocument();
+    expect(screen.getByText(/PDF Text Extraction Available/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Document parsing and external URL reputation checks are planned capabilities/i)
+      screen.getByText(/Text-based PDF extraction is available\. Scanned-PDF OCR, Word document parsing \(\.docx\), and external URL reputation checks are planned capabilities/i)
     ).toBeInTheDocument();
   });
 
@@ -598,5 +599,283 @@ describe("FraudLens App Component", () => {
         expect.any(AbortSignal)
       );
     });
+  });
+
+  it("transfers reviewed PDF document text into analysis form and displays document provenance notice", async () => {
+    const user = userEvent.setup();
+    const docReadyCapabilities: BackendCheckResult = {
+      health: { status: "ok", service: "fraudlens-api" },
+      capabilities: {
+        text_analysis: true,
+        screenshot_extraction: true,
+        document_extraction: true,
+        url_reputation: false,
+        saved_cases: false,
+        ai_connection: "not_tested",
+        ai_configuration: "present",
+      },
+    };
+
+    vi.spyOn(api, "checkBackendConnection").mockResolvedValue(docReadyCapabilities);
+    vi.spyOn(api, "extractDocument").mockResolvedValue({
+      combined_text: "NOTICE OF LEGAL ACTION: Pay 10000 INR immediately via gift cards.",
+      page_count: 1,
+      char_count: 65,
+      extraction_method: "embedded_text",
+      empty_pages: [],
+      warning: null,
+      pages: [{ page_number: 1, has_text: true, char_count: 65 }],
+      review_required: true,
+      notice: "Analysis evaluates the submitted reviewed text only.",
+      limitation: "Extraction evaluates embedded text only.",
+    });
+    const mockAnalyze = vi.spyOn(api, "analyzeText").mockResolvedValue(sampleSuccessAnalysis);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Backend connected:/i)).toBeInTheDocument();
+    });
+
+    // Upload PDF
+    const fileInput = document.getElementById("document-file-input") as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(["%PDF-dummy"], "notice.pdf", { type: "application/pdf" })] },
+    });
+
+    // Extract text
+    const extractButton = await screen.findByRole("button", { name: /Extract Text/i });
+    await user.click(extractButton);
+
+    // Confirm review
+    const reviewCheckbox = await screen.findByRole("checkbox", {
+      name: /I have reviewed and confirmed the extracted text for accuracy/i,
+    });
+    await user.click(reviewCheckbox);
+
+    // Transfer text
+    const transferBtn = screen.getByRole("button", { name: /Use Reviewed Text for Analysis/i });
+    await user.click(transferBtn);
+
+    // Verify extraction and transfer NEVER call Gemini
+    expect(mockAnalyze).not.toHaveBeenCalled();
+
+    // Verify text is in main analysis textarea
+    const messageInput = screen.getByLabelText(/Suspicious Message Text/i) as HTMLTextAreaElement;
+    expect(messageInput.value).toBe("NOTICE OF LEGAL ACTION: Pay 10000 INR immediately via gift cards.");
+
+    // Verify document provenance notice is visible
+    expect(screen.getByText(/Document Text Provenance Notice/i)).toBeInTheDocument();
+
+    // Submit analysis
+    const analyzeButton = screen.getByRole("button", { name: /Analyze Message/i });
+    expect(analyzeButton).toBeEnabled();
+    await user.click(analyzeButton);
+
+    await waitFor(() => {
+      expect(mockAnalyze).toHaveBeenCalledWith(
+        "NOTICE OF LEGAL ACTION: Pay 10000 INR immediately via gift cards.",
+        "en",
+        expect.any(AbortSignal)
+      );
+      expect(screen.getByText(/False Urgency/i)).toBeInTheDocument();
+    });
+  });
+
+  it("transferring changed PDF document text marks existing analysis stale and requires explicit analyze", async () => {
+    const user = userEvent.setup();
+    const docReadyCapabilities: BackendCheckResult = {
+      health: { status: "ok", service: "fraudlens-api" },
+      capabilities: {
+        text_analysis: true,
+        screenshot_extraction: true,
+        document_extraction: true,
+        url_reputation: false,
+        saved_cases: false,
+        ai_connection: "not_tested",
+        ai_configuration: "present",
+      },
+    };
+
+    vi.spyOn(api, "checkBackendConnection").mockResolvedValue(docReadyCapabilities);
+    vi.spyOn(api, "extractDocument").mockResolvedValue({
+      combined_text: "URGENT COURT SUMMONS: Send fine immediately.",
+      page_count: 1,
+      char_count: 44,
+      extraction_method: "embedded_text",
+      empty_pages: [],
+      warning: null,
+      pages: [{ page_number: 1, has_text: true, char_count: 44 }],
+      review_required: true,
+      notice: "Analysis evaluates the submitted reviewed text only.",
+      limitation: "Extraction evaluates embedded text only.",
+    });
+    const mockAnalyze = vi.spyOn(api, "analyzeText").mockResolvedValue(sampleSuccessAnalysis);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Backend connected:/i)).toBeInTheDocument();
+    });
+
+    // 1. Initial analysis
+    const textarea = screen.getByPlaceholderText(/Paste the suspicious SMS/i);
+    await user.type(textarea, "Initial message text before PDF transfer.");
+    const analyzeBtn = screen.getByRole("button", { name: /Analyze Message/i });
+    await user.click(analyzeBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/False Urgency/i)).toBeInTheDocument();
+    });
+    expect(mockAnalyze).toHaveBeenCalledTimes(1);
+
+    // 2. Upload and transfer PDF document text
+    const fileInput = document.getElementById("document-file-input") as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(["%PDF-dummy"], "summons.pdf", { type: "application/pdf" })] },
+    });
+
+    const extractBtn = await screen.findByRole("button", { name: /Extract Text/i });
+    await user.click(extractBtn);
+
+    const reviewCheckbox = await screen.findByRole("checkbox", {
+      name: /I have reviewed and confirmed the extracted text for accuracy/i,
+    });
+    await user.click(reviewCheckbox);
+
+    const transferBtn = screen.getByRole("button", { name: /Use Reviewed Text for Analysis/i });
+    await user.click(transferBtn);
+
+    // Confirm replacing existing analysis input
+    const confirmReplaceBtn = await screen.findByRole("button", { name: /Confirm Replace/i });
+    await user.click(confirmReplaceBtn);
+
+    // 3. Verify extraction and transfer did NOT call Gemini
+    expect(mockAnalyze).toHaveBeenCalledTimes(1);
+
+    // 4. Verify existing analysis result is visibly marked stale
+    expect(
+      screen.getByText(/Text or language was modified/i)
+    ).toBeInTheDocument();
+
+    // 5. Verify user manual edits are preserved
+    const messageInput = screen.getByLabelText(/Suspicious Message Text/i) as HTMLTextAreaElement;
+    expect(messageInput.value).toBe("URGENT COURT SUMMONS: Send fine immediately.");
+    await user.type(messageInput, " Contact: police@fake.test");
+    expect(messageInput.value).toBe("URGENT COURT SUMMONS: Send fine immediately. Contact: police@fake.test");
+
+    // 6. Explicitly analyze new text
+    await user.click(analyzeBtn);
+    await waitFor(() => {
+      expect(mockAnalyze).toHaveBeenCalledTimes(2);
+      expect(mockAnalyze).toHaveBeenLastCalledWith(
+        "URGENT COURT SUMMONS: Send fine immediately. Contact: police@fake.test",
+        "en",
+        expect.any(AbortSignal)
+      );
+    });
+  });
+
+  it("guarantees mutual exclusion of screenshot and document provenance notices when switching inputs", async () => {
+    const user = userEvent.setup();
+    const dualReadyCapabilities: BackendCheckResult = {
+      health: { status: "ok", service: "fraudlens-api" },
+      capabilities: {
+        text_analysis: true,
+        screenshot_extraction: true,
+        document_extraction: true,
+        url_reputation: false,
+        saved_cases: false,
+        ai_connection: "not_tested",
+        ai_configuration: "present",
+      },
+    };
+
+    vi.spyOn(api, "checkBackendConnection").mockResolvedValue(dualReadyCapabilities);
+    vi.spyOn(api, "extractScreenshot").mockResolvedValue({
+      extracted_text: "Screenshot text content",
+      ocr_language: "eng",
+      character_count: 23,
+      review_required: true,
+      notice: "Please review.",
+    });
+    vi.spyOn(api, "extractDocument").mockResolvedValue({
+      combined_text: "PDF document text content",
+      page_count: 1,
+      char_count: 25,
+      extraction_method: "embedded_text",
+      empty_pages: [],
+      warning: null,
+      pages: [{ page_number: 1, has_text: true, char_count: 25 }],
+      review_required: true,
+      notice: "Analysis evaluates reviewed text only.",
+      limitation: "Embedded text only.",
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Backend connected:/i)).toBeInTheDocument();
+    });
+
+    const screenshotSection = document.getElementById("screenshot-extraction-heading")!.closest("section")!;
+    const documentSection = document.getElementById("document-extraction-heading")!.closest("section")!;
+
+    // 1. Upload screenshot and transfer text
+    const imgInput = document.getElementById("screenshot-file-input") as HTMLInputElement;
+    fireEvent.change(imgInput, {
+      target: { files: [new File(["img"], "shot.png", { type: "image/png" })] },
+    });
+    const extractImgBtn = (await screen.findAllByRole("button", { name: /Extract Text/i })).find(
+      (b) => screenshotSection.contains(b)
+    )!;
+    await user.click(extractImgBtn);
+
+    const reviewImgCheckbox = (await screen.findAllByRole("checkbox", {
+      name: /I have reviewed and confirmed the extracted text for accuracy/i,
+    })).find((c) => screenshotSection.contains(c))!;
+    await user.click(reviewImgCheckbox);
+    const transferImgBtn = (await screen.findAllByRole("button", { name: /Use Reviewed Text for Analysis/i })).find(
+      (b) => screenshotSection.contains(b)
+    )!;
+    await user.click(transferImgBtn);
+
+    // Verify ONLY screenshot notice is present
+    expect(screen.getByText(/Screenshot Text Provenance Notice/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Document Text Provenance Notice/i)).not.toBeInTheDocument();
+
+    // 2. Switch input source to PDF document and transfer text
+    const docInput = document.getElementById("document-file-input") as HTMLInputElement;
+    fireEvent.change(docInput, {
+      target: { files: [new File(["%PDF-dummy"], "doc.pdf", { type: "application/pdf" })] },
+    });
+    const extractDocBtn = (await screen.findAllByRole("button", { name: /Extract Text/i })).find(
+      (b) => documentSection.contains(b)
+    )!;
+    await user.click(extractDocBtn);
+
+    const reviewDocCheckbox = (await screen.findAllByRole("checkbox", {
+      name: /I have reviewed and confirmed the extracted text for accuracy/i,
+    })).find((c) => documentSection.contains(c))!;
+    await user.click(reviewDocCheckbox);
+
+    const transferDocBtn = (await screen.findAllByRole("button", { name: /Use Reviewed Text for Analysis/i })).find(
+      (b) => documentSection.contains(b)
+    )!;
+    await user.click(transferDocBtn);
+
+    // Confirm overwrite
+    const confirmReplaceBtn = await screen.findByRole("button", { name: /Confirm Replace/i });
+    await user.click(confirmReplaceBtn);
+
+    // Verify ONLY document notice is present; screenshot notice CANNOT remain active
+    expect(screen.getByText(/Document Text Provenance Notice/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Screenshot Text Provenance Notice/i)).not.toBeInTheDocument();
+
+    // 3. Manually type in textarea: both notices disappear
+    const messageInput = screen.getByLabelText(/Suspicious Message Text/i) as HTMLTextAreaElement;
+    await user.type(messageInput, " manual edit");
+    expect(screen.queryByText(/Screenshot Text Provenance Notice/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Document Text Provenance Notice/i)).not.toBeInTheDocument();
   });
 });

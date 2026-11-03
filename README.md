@@ -4,7 +4,7 @@
 
 **Author**: Arnav Kumar  
 **Project Type**: Independent Portfolio Project  
-**Current Phase**: Phase 3A — Screenshot Text Extraction & Message Analysis (Offline Verified)
+**Current Phase**: Phase 3B — PDF Document Text Extraction & Message Analysis (Offline Verified)
 
 ---
 
@@ -51,7 +51,36 @@ FraudLens helps everyday users evaluate suspicious communications before sharing
   - Replacing or clearing the screenshot invalidates prior extractions.
   - Clear provenance badge upon transfer: *"Analysis evaluates the submitted reviewed text only. Findings concern textual content, not image authenticity, visual tampering, sender identity, or URL reputation."*
 
-### B. Suspicious Text Analysis (Phase 2B Baseline)
+### B. Local Text-Based PDF Document Extraction (Phase 3B)
+- **Local PDF Parsing Engine**:
+  - `POST /api/v1/extract/document` extracts embedded text from uploaded PDF documents using **`pypdf`** (`pypdf>=5.0.0,<6.0.0`, version 5.9.0, BSD-3-Clause license).
+  - **Zero External Transmission of Documents**: Document processing runs **100% locally on the backend**. The PDF file is **never sent to Google Gemini or any external service**.
+- **Worker Process Isolation**:
+  - Untrusted PDF parsing runs in an independent child process (`app.services.pdf_worker`) managed by `_SyncDocumentRunner`.
+  - Guarantees: Timeouts (20.0s) and cancellations forcibly kill the worker process (`proc.kill()`) and reap it via `proc.wait()`.
+  - Non-blocking `cancel()` does not stall the asyncio event loop on Windows with Uvicorn `--reload`.
+  - Shielded cleanup ensures the worker process is completely reaped before releasing the concurrency slot or unlinking temporary files.
+  - Concurrency: Document extraction uses `_document_semaphore = asyncio.Semaphore(3)`, operating independently from OCR's `_ocr_semaphore = asyncio.Semaphore(3)`. Up to 3 OCR workers and 3 PDF workers (up to 6 extraction subprocesses total) can execute concurrently.
+- **Strict Security & Resource Limits**:
+  - **File Size**: Maximum 5 MiB (`5 * 1024 * 1024` bytes). Pre-spool bounded upload middleware rejects oversized uploads before disk spooling.
+  - **Document Length**: Maximum 10 pages (`MAX_DOCUMENT_PAGES = 10`). Documents exceeding 10 pages are rejected with HTTP 422 `PAGE_LIMIT_EXCEEDED` (never silently truncated).
+  - **Character Limits**: Maximum 10,000 characters (`MAX_EXTRACTED_CHARACTERS = 10_000`). Text exceeding this is rejected with HTTP 422 `TEXT_TOO_LONG`.
+  - **Enforceable Memory Limit**: Windows Job Objects enforce a 256 MiB virtual memory ceiling per worker process on Windows before untrusted PDF parsing starts. Exceeding this triggers `MemoryError` safely mapped to `DOCUMENT_EXTRACTION_FAILED`. Best-effort RLIMIT_AS applies on POSIX if available.
+  - **Bounded I/O & Output Size**: Child `stdout` and `stderr` are discarded via `subprocess.DEVNULL`. Worker output JSON is checked and restricted to $\le 1$ MiB (`MAX_WORKER_RESULT_BYTES = 1024 * 1024`) both before worker write and before parent read/decode.
+  - **Security Restrictions**: Pure-Python reader does not execute PDF JavaScript, does not open embedded file attachments, does not follow external links/URIs, and does not render visual raster graphics.
+  - **Encryption**: Encrypted / password-protected PDFs are rejected with safe, actionable error `ENCRYPTED_PDF_REJECTED` (HTTP 422). Passwords are not accepted in this phase.
+- **Handling Pages Without Extractable Text**:
+  - If entire document has no usable text: rejected with HTTP 422 `EMPTY_DOCUMENT_EXTRACTION`, explaining that scanned PDFs or image-only documents are not supported.
+  - If only some pages have no text: returns structured page information, collects `empty_pages`, and includes a calibrated warning that extraction may be incomplete. Does not claim every empty page is necessarily scanned.
+- **Human-in-the-Loop Review Area**:
+  - Accessible dropzone with PDF validation, filename, file size, and remove file control.
+  - Extracted text is presented in an editable review textarea with prominent warning: *"Extraction can alter reading order, spacing, and characters, and may omit content. Confirmation is an opportunity to correct errors, not a guarantee of accuracy."*
+  - Requires user to check `[ ] I have reviewed and confirmed the extracted text for accuracy` before enabling transfer to analysis.
+  - **Review Invalidation**: Modifying the reviewed text automatically unchecks the confirmation box.
+  - **Nonempty Input Overwrite Protection**: Prompts for explicit confirmation before replacing existing analysis input.
+  - Clear provenance badge upon transfer: *"Document Text Provenance Notice: Analysis evaluates the submitted reviewed text only. Findings concern textual content, not document authenticity, signatures, visual tampering, sender identity, or URL reputation."*
+
+### C. Suspicious Text Analysis (Phase 2B Baseline)
 - **End-to-End Suspicious Text Analysis**:
   - Full flow: paste message → select explanation language (`English` or `हिन्दी`) → Analyze Message → validated assessment with quoted evidence, uncertainties, and practical verification steps.
   - Powered by Google Gemini (`gemini-3.5-flash-lite`) using the official `google-genai` Python SDK.
@@ -245,9 +274,9 @@ In a PowerShell terminal from the project root:
 .\backend\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests -v
 ```
 
-**Result**: 147 passed tests covering:
+**Result**: 167 passed tests covering:
 - Health response contract (`GET /api/v1/health`).
-- Capabilities reporting (`GET /api/v1/capabilities`) for text analysis and OCR prerequisites.
+- Capabilities reporting (`GET /api/v1/capabilities`) for text analysis, OCR, and document extraction.
 - Secret masking (`ai_api_key` never exposed).
 - Strict validation (blank text, character limit, language restrictions, extra field rejection).
 - Validation error sanitization (markers never echoed).
@@ -258,6 +287,10 @@ In a PowerShell terminal from the project root:
 - OCR image validation (PNG, JPEG, extension/MIME spoofing, max 5 MiB file size, max 12 MP decoded limits, multi-frame/animated rejection, decompression-bomb defense).
 - OCR dual event loop compatibility (Windows `_WindowsSelectorEventLoop` under Uvicorn `--reload` and `ProactorEventLoop`), worker thread fallback, process kill and reaping on timeout, and temporary file unlinking.
 - Real local OCR endpoint execution (`POST /api/v1/extract/screenshot`) and outbound network isolation (zero Gemini calls during OCR).
+- PDF document extraction (`POST /api/v1/extract/document`) with `pypdf`, worker process isolation, timeout termination, child process reaping, event loop responsiveness, and repeated cancellation shielding.
+- Single-page, multipage, and Hindi Unicode text extraction, empty doc rejection, incomplete page warnings, 10-page limit, and 10,000-character limit.
+- Pre-spool bounded multipart upload rejection (5 MiB + 64 KiB overhead), streaming oversize abort, and Starlette `SpooledTemporaryFile` cleanup.
+- Outbound network isolation (zero Gemini calls during document extraction).
 
 ### Frontend Verification (Vitest, Lint, TypeScript, Build)
 In a PowerShell terminal inside `frontend`:
@@ -277,12 +310,12 @@ npm run lint
 npm run build
 ```
 
-**Results (Phase 3A Final)**:
-- **Backend Tests (pytest)**: 147 tests passed in 21.80s.
-- **Frontend Tests (Vitest)**: 40 tests passed in 26.37s.
+**Results (Phase 3B Final)**:
+- **Backend Tests (pytest)**: 167 tests passed in 20.65s.
+- **Frontend Tests (Vitest)**: 49 tests passed in 19.70s.
 - **TypeScript (tsc -b)**: 0 errors.
 - **ESLint**: 0 errors, 0 warnings.
-- **Vite build**: production bundle created successfully in `dist/` (181.36 kB JS, 19.98 kB CSS).
+- **Vite build**: production bundle created successfully in `dist/` (195.56 kB JS, 23.55 kB CSS).
 
 ---
 

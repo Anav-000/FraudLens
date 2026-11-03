@@ -5,8 +5,11 @@ import { PlannedCapabilities } from "./components/PlannedCapabilities";
 import { AnalysisResultView } from "./features/analysis/AnalysisResultView";
 import { MessageAnalysisForm } from "./features/analysis/MessageAnalysisForm";
 import { ScreenshotExtractor } from "./features/screenshot/ScreenshotExtractor";
+import { DocumentExtractor } from "./features/document/DocumentExtractor";
 import { analyzeText, ApiClientError, checkBackendConnection } from "./lib/api";
 import { BackendConnectionState, Language, TextAnalysisResponse } from "./types/api";
+
+export type TextProvenance = "none" | "screenshot" | "document";
 
 export const App: React.FC = () => {
   const [backendState, setBackendState] = useState<BackendConnectionState>({
@@ -15,7 +18,11 @@ export const App: React.FC = () => {
   const [isRetryingBackend, setIsRetryingBackend] = useState(false);
   const [text, setText] = useState("");
   const [language, setLanguage] = useState<Language>("en");
-  const [extractedFromScreenshot, setExtractedFromScreenshot] = useState(false);
+  // Single mutually exclusive provenance state: guarantees screenshot and document provenance
+  // cannot both remain active after switching input source.
+  const [textProvenance, setTextProvenance] = useState<TextProvenance>("none");
+  const extractedFromScreenshot = textProvenance === "screenshot";
+  const extractedFromDocument = textProvenance === "document";
 
   // Analysis State
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
@@ -93,7 +100,7 @@ export const App: React.FC = () => {
 
   const handleTextChange = (newText: string) => {
     setText(newText);
-    setExtractedFromScreenshot(false);
+    setTextProvenance("none");
     if (analysisResult !== null) {
       setIsResultStale(true);
     }
@@ -104,7 +111,7 @@ export const App: React.FC = () => {
 
   const handleUseExtractedText = (extractedText: string) => {
     setText(extractedText);
-    setExtractedFromScreenshot(true);
+    setTextProvenance("screenshot");
     if (analysisResult !== null) {
       setIsResultStale(true);
     }
@@ -114,7 +121,22 @@ export const App: React.FC = () => {
   };
 
   const handleClearScreenshotState = () => {
-    setExtractedFromScreenshot(false);
+    setTextProvenance((prev) => (prev === "screenshot" ? "none" : prev));
+  };
+
+  const handleUseExtractedDocumentText = (extractedText: string) => {
+    setText(extractedText);
+    setTextProvenance("document");
+    if (analysisResult !== null) {
+      setIsResultStale(true);
+    }
+    if (analysisError !== null) {
+      setAnalysisError(null);
+    }
+  };
+
+  const handleClearDocumentState = () => {
+    setTextProvenance((prev) => (prev === "document" ? "none" : prev));
   };
 
   const handleLanguageChange = (newLang: Language) => {
@@ -130,7 +152,7 @@ export const App: React.FC = () => {
       abortControllerRef.current = null;
     }
     setText("");
-    setExtractedFromScreenshot(false);
+    setTextProvenance("none");
     setAnalysisResult(null);
     setIsResultStale(false);
     setAnalysisError(null);
@@ -218,6 +240,19 @@ export const App: React.FC = () => {
           />
         </section>
 
+        {/* Phase 3B: PDF Document Text Extraction (Local pypdf) */}
+        <section aria-labelledby="document-extraction-heading">
+          <h2 id="document-extraction-heading" className="sr-only">
+            PDF Document Text Extraction
+          </h2>
+          <DocumentExtractor
+            backendState={backendState}
+            onUseExtractedText={handleUseExtractedDocumentText}
+            onClearDocumentState={handleClearDocumentState}
+            hasExistingAnalysisText={Boolean(text.trim())}
+          />
+        </section>
+
         {/* Phase 2B Interactive Feature: Suspicious Message Input & Analysis */}
         <section aria-labelledby="message-analysis-heading">
           <h2 id="message-analysis-heading" className="sr-only">
@@ -238,6 +273,7 @@ export const App: React.FC = () => {
             errorAction={analysisError?.action}
             onRetryAnalysis={handleAnalyze}
             extractedFromScreenshot={extractedFromScreenshot}
+            extractedFromDocument={extractedFromDocument}
           />
         </section>
 
@@ -260,7 +296,7 @@ export const App: React.FC = () => {
       </main>
 
       <footer className="border-t border-slate-200 bg-white py-6 px-4 text-center text-xs text-slate-500">
-        <p>FraudLens • Independent Portfolio Project by Arnav Kumar • Phase 3A Build</p>
+        <p>FraudLens • Independent Portfolio Project by Arnav Kumar • Phase 3B Build</p>
       </footer>
     </div>
   );

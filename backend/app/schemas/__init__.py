@@ -3,6 +3,11 @@ from .capabilities import CapabilitiesResponse
 from .analysis import TextAnalysisRequest, ErrorResponse
 from .synthetic import SyntheticGreetingResponse
 from .ocr import OcrLanguage, ScreenshotExtractionResponse, ExtractionErrorResponse
+from .document import (
+    DocumentPageInfo,
+    DocumentExtractionResponse,
+    DocumentExtractionErrorResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -13,4 +18,7 @@ __all__ = [
     "OcrLanguage",
     "ScreenshotExtractionResponse",
     "ExtractionErrorResponse",
+    "DocumentPageInfo",
+    "DocumentExtractionResponse",
+    "DocumentExtractionErrorResponse",
 ]

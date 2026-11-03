@@ -20,7 +20,11 @@ OCR_TIMEOUT_SECONDS = 20.0  # Execution timeout
 ALLOWED_IMAGE_FORMATS: Set[str] = {"PNG", "JPEG"}
 SUPPORTED_OCR_LANGUAGES: Set[str] = {"eng", "hin"}
 
-# Bounded concurrency to avoid overwhelming CPU with concurrent OCR tasks
+# Bounded concurrency to avoid overwhelming CPU with concurrent OCR tasks.
+# Note on Combined Concurrency: _ocr_semaphore (3) operates independently from PDF
+# document extraction's _document_semaphore (3), permitting up to 3 OCR workers and
+# 3 PDF workers concurrently (up to 6 concurrent subprocesses total across both modalities),
+# rather than sharing a single combined semaphore of 3.
 _ocr_semaphore = asyncio.Semaphore(3)
 
 

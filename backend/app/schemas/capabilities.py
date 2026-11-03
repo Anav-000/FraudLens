@@ -5,6 +5,7 @@ from pydantic import BaseModel
 class CapabilitiesResponse(BaseModel):
     text_analysis: bool = True
     screenshot_extraction: bool = False
+    document_extraction: bool = True
     url_reputation: bool = False
     saved_cases: bool = False
     ai_connection: Literal["not_tested", "connected", "failed"] = "not_tested"

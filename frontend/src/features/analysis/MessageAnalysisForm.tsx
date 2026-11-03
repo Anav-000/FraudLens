@@ -18,6 +18,7 @@ interface MessageAnalysisFormProps {
   errorAction?: string | null;
   onRetryAnalysis?: () => void;
   extractedFromScreenshot?: boolean;
+  extractedFromDocument?: boolean;
 }
 
 export const MessageAnalysisForm: React.FC<MessageAnalysisFormProps> = ({
@@ -35,6 +36,7 @@ export const MessageAnalysisForm: React.FC<MessageAnalysisFormProps> = ({
   errorAction,
   onRetryAnalysis,
   extractedFromScreenshot = false,
+  extractedFromDocument = false,
 }) => {
   const isBackendConnected = backendState.status === "connected";
   const hasTextAnalysisCapability =
@@ -200,6 +202,22 @@ export const MessageAnalysisForm: React.FC<MessageAnalysisFormProps> = ({
           </div>
         )}
 
+        {extractedFromDocument && (
+          <div
+            id="document-provenance-notice"
+            className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-700 flex items-start gap-2.5"
+          >
+            <span className="font-semibold text-slate-600 flex-shrink-0" aria-hidden="true">📄</span>
+            <div>
+              <strong className="font-semibold text-slate-800">Document Text Provenance Notice:</strong>
+              <p className="mt-0.5 text-slate-600 leading-relaxed">
+                Analysis evaluates the submitted reviewed text only. Findings concern textual content,
+                not document authenticity, signatures, visual tampering, sender identity, or URL reputation.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div
           id="submission-notice"
           className="rounded-lg bg-teal-50/70 border border-teal-200 p-3 text-xs text-teal-900 flex items-start gap-2.5"
@@ -209,8 +227,8 @@ export const MessageAnalysisForm: React.FC<MessageAnalysisFormProps> = ({
             <strong className="font-semibold">Development Demo — Use Fictional Data Only.</strong>
             <p className="mt-0.5 text-teal-800/90">
               Submitted text is sent to Google Gemini for AI analysis. Do not submit real personal,
-              financial, or credential information. Screenshot extraction runs locally on the backend
-              and the image is never sent to Google.
+              financial, or credential information. Screenshot and PDF document extraction run locally on the backend
+              and files are never sent to Google.
             </p>
           </div>
         </div>

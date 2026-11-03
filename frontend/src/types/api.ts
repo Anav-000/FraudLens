@@ -9,6 +9,7 @@ export interface HealthResponse {
 export interface CapabilitiesResponse {
   text_analysis: boolean;
   screenshot_extraction: boolean;
+  document_extraction?: boolean;
   url_reputation: boolean;
   saved_cases: boolean;
   ai_connection: "not_tested" | "connected" | "failed";
@@ -23,6 +24,25 @@ export interface ScreenshotExtractionResponse {
   character_count: number;
   review_required: boolean;
   notice: string;
+}
+
+export interface DocumentPageInfo {
+  page_number: number;
+  has_text: boolean;
+  char_count: number;
+}
+
+export interface DocumentExtractionResponse {
+  combined_text: string;
+  page_count: number;
+  char_count: number;
+  extraction_method: "embedded_text";
+  empty_pages: number[];
+  warning?: string | null;
+  pages: DocumentPageInfo[];
+  review_required: boolean;
+  notice: string;
+  limitation: string;
 }
 
 export interface BackendCheckResult {

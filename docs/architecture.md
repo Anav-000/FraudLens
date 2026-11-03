@@ -86,7 +86,46 @@ To prevent tight coupling with any single AI provider or SDK:
 
 ---
 
-## 6. Unresolved Status & Pending Decisions
+## 6. Local File Extraction & Review Architecture (Phases 3A & 3B)
+
+To support analyzing evidence received in screenshots or documents without compromising privacy or security:
+
+### A. Local Backend Processing & Privacy Boundary
+- **Zero Cloud Transmission of Files**: Screenshots and PDF documents are processed **100% locally on the backend server**. Raw files, image pixels, and document binaries are **never** transmitted to Google Gemini, cloud OCR APIs, or external services.
+- **Human-in-the-Loop Review**: Extracted text is returned to the user in an editable review interface. Downstream Gemini analysis is triggered only after the user explicitly reviews, confirms, transfers, and clicks "Analyze Message".
+- **Evidence Provenance Boundary**: Downstream text analysis evaluates the *submitted reviewed text only*. Analysis findings concern textual patterns, not document authenticity, digital signatures, visual tampering, sender identity, or URL reputation.
+
+### B. Screenshot OCR Engine (Phase 3A)
+- **Engine**: Local Tesseract OCR CLI invocation paired with Pillow image validation.
+- **Constraints**: Single static PNG or JPEG image ($\le 5$ MiB, $\le 12$ megapixels). Multi-frame/animated images and decompression bombs are rejected.
+- **Dual Event Loop Compatibility**: Uses `asyncio.to_thread` with synchronous runner fallback on Windows `SelectorEventLoop` (Uvicorn `--reload` mode) and Proactor loop. Bounded concurrency (`asyncio.Semaphore(3)`) and 20.0s timeout with process kill and reaping.
+
+### C. PDF Document Text Extraction (Phase 3B)
+- **Library Selection**: **`pypdf`** (`pypdf>=5.0.0,<6.0.0`, version 5.9.0).
+  - *Rationale*: Permissive BSD-3-Clause license, maintained pure-Python library, zero native C-compilation dependencies, compatible across Windows and Linux.
+  - *Security Properties*: Does not execute embedded PDF JavaScript, does not open embedded file attachments, does not follow external links/URIs, and does not render visual raster graphics.
+- **Separately Terminable Worker Process**:
+  - Untrusted PDF parsing runs in an isolated Python subprocess (`app.services.pdf_worker`) rather than a worker thread. This ensures that memory consumption, infinite object loops, or malicious compression bombs can be forcibly terminated via OS-level process kill (`proc.kill()` on Windows via `TerminateProcess`) and reaped cleanly without lingering threads.
+- **Enforceable Memory Limit (Windows Job Objects)**:
+  - *Mechanism*: On the supported Windows environment, `pdf_worker.py` applies an OS-enforced virtual memory limit via Windows Job Objects (`JOBOBJECT_EXTENDED_LIMIT_INFORMATION` setting both `JOB_OBJECT_LIMIT_PROCESS_MEMORY` and `JOB_OBJECT_LIMIT_JOB_MEMORY`) strictly *before* opening or parsing untrusted PDF bytes.
+  - *Threshold*: 256 MiB per worker process.
+  - *Failure Behavior*: When memory allocation reaches the 256 MiB ceiling, the OS rejects virtual allocation calls with `ERROR_COMMITMENT_LIMIT`, causing Python's memory allocator to raise `MemoryError`. This is caught and mapped to HTTP 500 / `DOCUMENT_EXTRACTION_FAILED` with an actionable error message. If the process terminates abnormally without writing output, `DocumentService` handles missing output safely as `DOCUMENT_EXTRACTION_FAILED`.
+  - *Platform Support*: Windows Job Objects provide the enforced memory ceiling on the primary Windows deployment target (`sys.platform == "win32"`). On POSIX environments, `resource.setrlimit(resource.RLIMIT_AS, ...)` is called on a best-effort basis; universal memory enforcement across unverified OSs is not claimed.
+- **Bounded I/O & Worker Result Byte Limits**:
+  - `stdout` and `stderr` are discarded using `subprocess.DEVNULL`, preventing child process pipe buffers from accumulating unbounded output in the parent process.
+  - Worker output JSON is strictly bounded to $\le 1$ MiB (`MAX_WORKER_RESULT_BYTES = 1024 * 1024`). The worker verifies byte size before writing to disk, and the parent `DocumentService` checks file size before opening or parsing JSON.
+- **Combined Concurrency Clarification**:
+  - PDF document extraction concurrency is bounded by `_document_semaphore = asyncio.Semaphore(3)`.
+  - Concurrency for screenshot OCR is bounded by `_ocr_semaphore = asyncio.Semaphore(3)`.
+  - These two semaphores operate independently: the backend permits up to 3 active OCR workers plus 3 active PDF worker processes simultaneously (up to 6 concurrent extraction worker subprocesses total across both modalities), rather than a single shared semaphore of 3.
+- **Page & Text Limits**:
+  - Maximum document length: 10 pages (`MAX_DOCUMENT_PAGES = 10`). Oversized documents are rejected with HTTP 422 `PAGE_LIMIT_EXCEEDED` (never silently truncated).
+  - Maximum extracted text: 10,000 characters (`MAX_EXTRACTED_CHARACTERS = 10_000`). Text exceeding this is rejected with HTTP 422 `TEXT_TOO_LONG`.
+  - Incomplete extraction warning: If only some pages contain extractable text, empty page numbers are identified and an incomplete-extraction warning is displayed.
+
+---
+
+## 7. Unresolved Status & Pending Decisions
 
 1. **Live Provider Authentication**:
    - The selected model `gemini-3.5-flash-lite` was validated live through user-executed CLI diagnostics (plain-text greeting in 3.65s, structured bilingual greeting in 1.80s).

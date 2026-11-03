@@ -15,6 +15,19 @@ from .ocr import (
     check_ocr_availability,
     find_tesseract_binary,
 )
+from .document import (
+    DocumentService,
+    DocumentServiceError,
+    UnsupportedDocumentFormatError,
+    DocumentFileTooLargeError,
+    InvalidPdfError,
+    EncryptedPdfError,
+    PageLimitExceededError,
+    EmptyDocumentExtractionError,
+    DocumentTextTooLongError,
+    DocumentTimeoutError,
+    DocumentExecutionError,
+)
 
 __all__ = [
     "GeminiAdapter",
@@ -34,4 +47,15 @@ __all__ = [
     "OcrExecutionError",
     "check_ocr_availability",
     "find_tesseract_binary",
+    "DocumentService",
+    "DocumentServiceError",
+    "UnsupportedDocumentFormatError",
+    "DocumentFileTooLargeError",
+    "InvalidPdfError",
+    "EncryptedPdfError",
+    "PageLimitExceededError",
+    "EmptyDocumentExtractionError",
+    "DocumentTextTooLongError",
+    "DocumentTimeoutError",
+    "DocumentExecutionError",
 ]

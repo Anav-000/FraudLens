@@ -42,12 +42,18 @@ def create_app() -> FastAPI:
     async def multipart_exception_handler(
         request: Request, exc: MultiPartException
     ) -> JSONResponse:
+        path = request.scope.get("path", "")
+        action = (
+            "Upload a single PDF document file."
+            if "document" in path
+            else "Upload a single PNG or JPEG screenshot with an optional ocr_language field."
+        )
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
                 "code": "INVALID_MULTIPART_REQUEST",
                 "message": "The multipart request payload was invalid or exceeded allowed part boundaries.",
-                "action": "Upload a single PNG or JPEG screenshot with an optional ocr_language field.",
+                "action": action,
             },
             headers={"Cache-Control": "no-store"},
         )
@@ -63,6 +69,12 @@ def create_app() -> FastAPI:
 
         # Detect abort caused by streamed payload size overflow
         if request.scope.get("payload_too_large"):
+            path = request.scope.get("path", "")
+            action = (
+                "Compress or split the PDF document before uploading."
+                if "document" in path
+                else "Compress, crop, or resize the screenshot before uploading."
+            )
             return JSONResponse(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 content={
@@ -71,7 +83,7 @@ def create_app() -> FastAPI:
                         "Streamed request body exceeded the maximum allowed size limit of "
                         "5 MiB (with 64 KiB multipart overhead)."
                     ),
-                    "action": "Compress, crop, or resize the screenshot before uploading.",
+                    "action": action,
                 },
                 headers=headers,
             )
