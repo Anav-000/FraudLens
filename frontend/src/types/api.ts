@@ -10,6 +10,7 @@ export interface CapabilitiesResponse {
   text_analysis: boolean;
   screenshot_extraction: boolean;
   document_extraction?: boolean;
+  url_inspection?: boolean;
   url_reputation: boolean;
   saved_cases: boolean;
   ai_connection: "not_tested" | "connected" | "failed";
@@ -41,6 +42,43 @@ export interface DocumentExtractionResponse {
   warning?: string | null;
   pages: DocumentPageInfo[];
   review_required: boolean;
+  notice: string;
+  limitation: string;
+}
+
+export type UrlObservationLevel = "informational" | "caution" | "warning";
+
+export interface UrlObservation {
+  id: string;
+  title: string;
+  level: UrlObservationLevel;
+  description: string;
+}
+
+export interface UrlInspectionResponse {
+  submitted_url: string;
+  scheme: string;
+  hostname: string;
+  hostname_ascii: string;
+  hostname_unicode: string;
+  port: number | null;
+  is_default_port: boolean;
+  path: string;
+  query: string | null;
+  fragment: string | null;
+  has_userinfo: boolean;
+  userinfo: string | null;
+  is_ip_address: boolean;
+  ip_version: number | null;
+  ip_scope: string | null;
+  is_punycode: boolean;
+  registrable_domain: string | null;
+  subdomain_count: number;
+  subdomains: string[];
+  observations: UrlObservation[];
+  summary: string;
+  inspection_basis: string;
+  external_checks_performed: boolean;
   notice: string;
   limitation: string;
 }

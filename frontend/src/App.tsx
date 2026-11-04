@@ -6,6 +6,7 @@ import { AnalysisResultView } from "./features/analysis/AnalysisResultView";
 import { MessageAnalysisForm } from "./features/analysis/MessageAnalysisForm";
 import { ScreenshotExtractor } from "./features/screenshot/ScreenshotExtractor";
 import { DocumentExtractor } from "./features/document/DocumentExtractor";
+import { UrlInspector } from "./features/url/UrlInspector";
 import { analyzeText, ApiClientError, checkBackendConnection } from "./lib/api";
 import { BackendConnectionState, Language, TextAnalysisResponse } from "./types/api";
 
@@ -101,47 +102,14 @@ export const App: React.FC = () => {
   const handleTextChange = (newText: string) => {
     setText(newText);
     setTextProvenance("none");
-    if (analysisResult !== null) {
+    if (analysisResult) {
       setIsResultStale(true);
     }
-    if (analysisError !== null) {
-      setAnalysisError(null);
-    }
-  };
-
-  const handleUseExtractedText = (extractedText: string) => {
-    setText(extractedText);
-    setTextProvenance("screenshot");
-    if (analysisResult !== null) {
-      setIsResultStale(true);
-    }
-    if (analysisError !== null) {
-      setAnalysisError(null);
-    }
-  };
-
-  const handleClearScreenshotState = () => {
-    setTextProvenance((prev) => (prev === "screenshot" ? "none" : prev));
-  };
-
-  const handleUseExtractedDocumentText = (extractedText: string) => {
-    setText(extractedText);
-    setTextProvenance("document");
-    if (analysisResult !== null) {
-      setIsResultStale(true);
-    }
-    if (analysisError !== null) {
-      setAnalysisError(null);
-    }
-  };
-
-  const handleClearDocumentState = () => {
-    setTextProvenance((prev) => (prev === "document" ? "none" : prev));
   };
 
   const handleLanguageChange = (newLang: Language) => {
     setLanguage(newLang);
-    if (analysisResult !== null && newLang !== analysisResult.language) {
+    if (analysisResult) {
       setIsResultStale(true);
     }
   };
@@ -164,10 +132,52 @@ export const App: React.FC = () => {
     setIsResultStale(false);
   };
 
-  const handleAnalyze = async () => {
-    if (isLoadingAnalysis) return;
+  const handleUseExtractedText = (extractedText: string) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setText(extractedText);
+    setTextProvenance("screenshot");
+    setAnalysisError(null);
+    setIsLoadingAnalysis(false);
+    if (analysisResult) {
+      setIsResultStale(true);
+    }
+  };
 
-    // Abort any prior request if still active
+  const handleClearScreenshotState = () => {
+    if (textProvenance === "screenshot") {
+      setTextProvenance("none");
+    }
+  };
+
+  const handleUseExtractedDocumentText = (extractedText: string) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setText(extractedText);
+    setTextProvenance("document");
+    setAnalysisError(null);
+    setIsLoadingAnalysis(false);
+    if (analysisResult) {
+      setIsResultStale(true);
+    }
+  };
+
+  const handleClearDocumentState = () => {
+    if (textProvenance === "document") {
+      setTextProvenance("none");
+    }
+  };
+
+  const handleAnalyze = async () => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return;
+    }
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -179,19 +189,11 @@ export const App: React.FC = () => {
     setAnalysisError(null);
 
     try {
-      const result = await analyzeText(text, language, controller.signal);
-      // Only commit if this controller is still current
-      if (abortControllerRef.current === controller) {
-        setAnalysisResult(result);
-        setIsResultStale(false);
-      }
+      const response = await analyzeText(trimmed, language, controller.signal);
+      setAnalysisResult(response);
+      setIsResultStale(false);
     } catch (err: unknown) {
-      if (abortControllerRef.current !== controller) {
-        // Request was superseded or cancelled; do not update UI state
-        return;
-      }
       if (err instanceof ApiClientError && err.isAborted) {
-        // Explicitly aborted by user; no error banner needed
         return;
       }
 
@@ -253,6 +255,9 @@ export const App: React.FC = () => {
           />
         </section>
 
+        {/* Phase 4A: Local URL Structure Inspection */}
+        <UrlInspector />
+
         {/* Phase 2B Interactive Feature: Suspicious Message Input & Analysis */}
         <section aria-labelledby="message-analysis-heading">
           <h2 id="message-analysis-heading" className="sr-only">
@@ -296,7 +301,7 @@ export const App: React.FC = () => {
       </main>
 
       <footer className="border-t border-slate-200 bg-white py-6 px-4 text-center text-xs text-slate-500">
-        <p>FraudLens • Independent Portfolio Project by Arnav Kumar • Phase 3B Build</p>
+        <p>FraudLens • Independent Portfolio Project by Arnav Kumar • Phase 4A Build</p>
       </footer>
     </div>
   );

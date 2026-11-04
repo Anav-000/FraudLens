@@ -4,7 +4,7 @@
 
 **Author**: Arnav Kumar  
 **Project Type**: Independent Portfolio Project  
-**Current Phase**: Phase 3B — PDF Document Text Extraction & Message Analysis (Offline Verified)
+**Current Phase**: Phase 4A — Local URL Structure Inspection & Multi-Modal Analysis (Offline Verified)
 
 ---
 
@@ -112,6 +112,42 @@ FraudLens helps everyday users evaluate suspicious communications before sharing
   - Stale detection: Modifying text or switching language while viewing a previous result flags the card as stale until re-evaluated.
 - **Live Analysis Status**:
   - Autonomous implementation was completed using comprehensive offline test mocks. **Live text analysis status: NOT RUN.** Manual verification instructions and a fictional-data checklist are provided below.
+
+### D. Local URL Structure Inspection (Phase 4A)
+- **Offline Structural Parsing Engine**:
+  - `POST /api/v1/inspect/url` inspects URL structure without connecting to the remote server or fetching content.
+  - **Zero Outbound Network Guarantee**: The inspection pipeline makes **strictly zero network connections**. No DNS resolution (`socket.getaddrinfo`), no socket connections, no HTTP requests, no WHOIS queries, and no AI calls.
+- **Separation of Available vs. Planned Capabilities**:
+  - **Available**: Local URL structure inspection (decomposing scheme, destination host, port, userinfo, IP addresses, punycode, and PSL registrable domain).
+  - **Planned**: External reputation checks (Google Safe Browsing, VirusTotal, WHOIS domain age).
+  - *Core Principle*: Structural inspection alone **never** proves a URL is safe or malicious. Clean structure does not guarantee legitimacy; non-default ports or IP addresses are not inherently fraudulent. Neither establishes sender identity.
+- **Parsing Libraries & PSL Derivation**:
+  - Python standard library `urllib.parse.urlsplit` (never a single regular expression).
+  - Python `ipaddress` for IPv4/IPv6 classification, bracketed IPv6 support (`[::1]`), and scope categorization (`private`, `loopback`, `link_local`, `reserved`, `public`).
+  - `idna` (version 3.20) for IDNA 2008 Unicode and ASCII punycode validation and conversion.
+  - `tldextract` (version 5.4.0) with bundled offline Public Suffix List snapshot:
+    - Runtime downloads strictly disabled (`suffix_list_urls=()`, `cache_dir=None`).
+    - Configured with RFC 2606 / RFC 6761 reserved testing TLDs (`invalid`, `test`, `example`, `localhost`).
+    - Derives registrable domains reliably without arbitrary two-label approximations (e.g. handles `example.co.uk`, `service.gov.in`, `com.au`).
+- **Deterministic Structural Observations**:
+  - `unencrypted_http`: Informational. Unencrypted transit; notes that HTTP alone does not prove fraud.
+  - `userinfo_present`: Caution. Credentials before `@` in netloc do not represent the destination domain; highlights actual destination host.
+  - `ip_literal_host`: Caution. Destination is a direct IP address. Scope noted (private, loopback, public). Notes an IP address is not inherently malicious.
+  - `special_use_address`: Informational. Explains special-use/private/loopback scope without asserting network reachability.
+  - `punycode_hostname`: Informational. Displays both Unicode and ASCII punycode (`xn--...`). Explains IDN legitimacy alongside lookalike caveat.
+  - `non_default_port`: Informational. Identifies port without labeling it malicious.
+  - `deep_subdomain_hierarchy`: Caution. Threshold >= 3 subdomain levels. Explains deep subdomain risk objectively.
+- **Security & Privacy Boundaries**:
+  - Maximum URL length: 2,048 characters (`MAX_URL_LENGTH = 2048`).
+  - Pre-parse control character check: rejects strings with ASCII control characters (< 32 or 127) or embedded spaces.
+  - Explicit scheme requirement: strictly requires `http://` or `https://`. Schemes are never silently guessed or repaired.
+  - `Cache-Control: no-store` on all success (200) and validation failure (422) responses.
+  - Zero URL logging or persistence: submitted URLs are never logged or saved on the server.
+- **Frontend Presentation**:
+  - Accessible `UrlInspector` component in `frontend/src/features/url/UrlInspector.tsx`.
+  - Destination hostname is prominently styled in a highlighted card so users immediately see where the link actually points.
+  - Submitted URL is displayed strictly as **plain text** with word break (`break-all`), **NEVER as an `<a>` tag or clickable HTML link**.
+  - Edit invalidation marks previous findings as stale; `AbortController` discards pending requests on edit, reset, or re-inspection.
 
 ---
 
@@ -412,7 +448,42 @@ When Tesseract OCR is installed on the host, use this checklist to verify the sc
 
 ---
 
-## 10. Troubleshooting
+## 10. Manual URL Inspection Test Checklist (Phase 4A)
+
+Use this checklist with fictional test URLs to verify the URL structure inspection workflow in the browser:
+
+1. **Ordinary HTTPS URL**:
+   - Input: `https://example.com/login`
+   - Verify prominent destination host card shows `example.com`.
+   - Verify submitted URL is rendered as plain text (not a clickable link).
+   - Verify observations state no anomalies detected.
+2. **Userinfo URL with Brand Impersonation Pattern**:
+   - Input: `https://mybank.com@destination.invalid/account`
+   - Verify destination host card prominently displays `destination.invalid` (NOT `mybank.com`).
+   - Verify caution observation highlights that `mybank.com` is authentication userinfo, not the destination server.
+3. **Misleading Deep Subdomain**:
+   - Input: `https://mybank.com.security.destination.invalid/portal`
+   - Verify destination host displays `mybank.com.security.destination.invalid`.
+   - Verify Registrable Domain displays `destination.invalid`.
+   - Verify Caution observation: Deep Subdomain Hierarchy (3 levels: `mybank`, `com`, `security`).
+4. **Valid Unicode IDN / Punycode**:
+   - Input: `https://münchen.de/portal`
+   - Verify destination host displays `münchen.de`.
+   - Verify ASCII Punycode displays `xn--mnchen-3ya.de`.
+   - Verify Informational observation explains Internationalized Domain Names.
+5. **Direct IP Address & Non-Default Port**:
+   - Input: `http://192.168.1.1:8080/admin`
+   - Verify destination host displays `192.168.1.1` (IPv4, private scope).
+   - Verify Informational observations for unencrypted HTTP, non-default port 8080, and private address scope.
+6. **Input Validation & Stale Detection**:
+   - Enter `ftp://files.example.com` -> verify `UNSUPPORTED_SCHEME` error callout with actionable guidance.
+   - Enter `https://example.com:99999` -> verify `INVALID_PORT` error callout.
+   - Modify the input text after inspection -> verify stale banner: *"Input modified: The URL was changed since the last inspection."*
+   - Click Reset -> verify input and results are cleared.
+
+---
+
+## 11. Troubleshooting
 
 ### 1. Missing or Placeholder Key Error
 If the backend returns HTTP 503 `AI_CONFIGURATION_MISSING`:

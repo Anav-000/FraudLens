@@ -9,6 +9,7 @@ from app.api.v1.analysis import router as analysis_router
 from app.api.v1.capabilities import router as capabilities_router
 from app.api.v1.extract import router as extract_router
 from app.api.v1.health import router as health_router
+from app.api.v1.inspect import router as inspect_router
 from app.core.config import get_settings
 from app.middleware.upload_limits import BoundedUploadMiddleware
 
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
                 "message": "The request payload failed validation.",
                 "details": sanitized_details,
             },
+            headers={"Cache-Control": "no-store"},
         )
 
     # Register routers under /api/v1
@@ -132,6 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(capabilities_router, prefix="/api/v1")
     app.include_router(analysis_router, prefix="/api/v1")
     app.include_router(extract_router, prefix="/api/v1")
+    app.include_router(inspect_router, prefix="/api/v1")
 
     return app
 

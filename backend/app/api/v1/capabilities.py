@@ -24,6 +24,7 @@ def get_capabilities(
         text_analysis=True,
         screenshot_extraction=ocr_available,
         document_extraction=True,
+        url_inspection=True,
         url_reputation=False,
         saved_cases=False,
         ai_connection="not_tested",

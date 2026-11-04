@@ -28,6 +28,7 @@ from .document import (
     DocumentTimeoutError,
     DocumentExecutionError,
 )
+from .url_inspector import UrlInspectorService, UrlInspectionError
 
 __all__ = [
     "GeminiAdapter",
@@ -58,4 +59,6 @@ __all__ = [
     "DocumentTextTooLongError",
     "DocumentTimeoutError",
     "DocumentExecutionError",
+    "UrlInspectorService",
+    "UrlInspectionError",
 ]

@@ -457,3 +457,83 @@ User-executed manual checks confirmed:
 2. **Text Content Only**: FraudLens evaluates textual patterns present in the reviewed text. It does not inspect visual layout, font styling, digital signatures, embedded attachments, or document authenticity.
 3. **No External URL Reputation / WHOIS Checks**: URLs cited in evidence are treated strictly as textual strings. FraudLens does not perform active network probes, DNS lookups, domain registration age checks, or external reputation API queries.
 4. **Scanned PDF Guidance**: Scanned PDFs contain pixel images rather than character streams; users with scanned document images should take a screenshot and use Screenshot Text Extraction.
+
+
+---
+
+## Phase 4A: Local URL Structure Inspection
+
+**Status**: Phase 4A Complete & Offline Verified  
+**Milestone Completion Date**: 2026-11-04  
+
+### 1. Scope & Implementation Overview
+
+#### A. Local URL Inspection Architecture
+- **Endpoint**: `POST /api/v1/inspect/url`
+- **Parsing Foundation**:
+  - Python standard library `urllib.parse.urlsplit` (handles URI RFC 3986 parsing). Single monolithic regular expressions are strictly avoided.
+  - Python standard library `ipaddress` for IP literal validation, scope classification (private, loopback, link_local, reserved, public), and bracketed IPv6 support.
+  - `idna` package explicitly declared in `backend/requirements.txt` (`idna>=3.7,<4.0.0`) for IDNA 2008 Unicode and ASCII punycode validation and conversion.
+  - `tldextract` (version 5.4.0) with bundled offline Public Suffix List (PSL) snapshot:
+    - Runtime downloads strictly disabled (`cache_dir=None, suffix_list_urls=()`).
+    - RFC 2606 / RFC 6761 reserved testing TLDs configured (`extra_suffixes=['invalid', 'test', 'example', 'localhost']`) to reliably derive registrable domains without falling back to two-label heuristics.
+    - Arbitrary two-label suffix approximation is strictly avoided.
+  - **Backslash Rejection & Browser-Aligned Numeric Host Handling**:
+    - Ambiguous URLs containing backslashes (e.g., `https://trusted.com\@attacker.invalid`, `https://example.com\path`) are rejected upfront with HTTP 422 `MALFORMED_URL` to prevent browser-vs-server parser differential discrepancies.
+    - WHATWG-compliant IPv4 canonicalization normalizes shorthand and non-standard numeric host formats (1-to-4 parts, decimal, hexadecimal `0x`, octal `0`) such as `127.1`, `2130706433`, and `0x7f000001` to standard dotted-decimal IPv4, accompanied by the `non_standard_ip_representation` caution observation.
+    - Hosts that end in numbers but violate numeric IP boundaries (e.g., `999.999.999.999`, `127.0.0.256`, `089.1`, `example.123`) are rejected with HTTP 422 `INVALID_HOSTNAME` rather than incorrectly treated as domain names.
+- **Strict Zero-Network Boundary**:
+  - Zero DNS resolution (`socket.getaddrinfo` is not called).
+  - Zero socket connections or HTTP/HTTPS requests (`socket.connect`, `urllib.request`, `httpx`, `requests` not called).
+  - Zero asset downloads, page fetches, favicon queries, or link previews.
+  - Zero external reputation queries (WHOIS, Google Safe Browsing, VirusTotal).
+  - Zero calls to Google Gemini during URL inspection.
+- **Privacy & Security Boundaries**:
+  - Submitted URLs are never logged or persisted on the server (protecting private tokens or credentials).
+  - `Cache-Control: no-store` on all success (200) and validation failure (422) responses.
+  - Maximum URL length: 2,048 characters (`MAX_URL_LENGTH = 2048`).
+  - Pre-parse control character validation: rejects strings containing ASCII control characters (< 32 or 127) or whitespace.
+  - Explicit scheme enforcement: strictly requires `http://` or `https://` prefix. Schemes are never silently guessed or repaired.
+
+#### B. Deterministic Observations & Calibrated Wording
+- `unencrypted_http`: Informational. Unencrypted transit; notes that HTTP alone does not prove fraud.
+- `userinfo_present`: Caution. Credentials before `@` in netloc do not represent the destination domain; highlights actual destination host.
+- `ip_literal_host`: Caution. Destination is a direct IP address. Scope noted (private, loopback, public). Notes an IP address is not inherently malicious.
+- `special_use_address`: Informational. Explains special-use/private/loopback scope without asserting network reachability.
+- `punycode_hostname`: Informational. Displays both Unicode and ASCII punycode (`xn--...`). Explains IDN legitimacy alongside lookalike caveat.
+- `non_default_port`: Informational. Identifies port without labeling it malicious.
+- `deep_subdomain_hierarchy`: Caution. Threshold $\ge 3$ subdomain levels. Explains deep subdomain risk objectively.
+- Explicit disclaimers:
+  - `notice`: *"URL Structure Inspection Only — No external reputation checks, domain registration lookups, or live network connections performed."*
+  - `limitation`: *"This assessment is based solely on local structural analysis of the submitted URL string. No network connections, DNS resolutions, external reputation queries, domain ownership checks, or threat intelligence lookups were performed. Structural inspection cannot determine whether a destination is safe, benign, or malicious."*
+
+#### C. Frontend Implementation
+- **`UrlInspector` Component** (`frontend/src/features/url/UrlInspector.tsx`):
+  - Standalone section in `App.tsx` labeled "URL Structure Inspection".
+  - URL text input with 2,048 character limit, character counter, and explicit "Inspect URL" and "Reset" buttons.
+  - Prominent Destination Hostname card (`data-testid="destination-hostname"`).
+  - Submitted URL rendered as **plain text** with CSS word-break (`break-all`), **NEVER as an `<a>` tag or clickable link**.
+  - Structural breakdown grid: Scheme, Hostname, Registrable Domain (eTLD+1), Subdomains, Port, Path, Query, Fragment, IP Scope.
+  - Observation cards with calibrated level badges.
+  - Visible notice and limitation disclaimers.
+  - Edit invalidation: typing after an inspection marks results as stale (`isStale = true`).
+  - In-flight request cancellation via `AbortController`: canceling or resetting discards pending responses and prevents late overwrites.
+
+---
+
+### 2. Actual Verification Results (Phase 4A Final)
+
+| Suite | Scope | Target | Result | Status |
+|---|---|---|---|---|
+| **Backend Tests** | `pytest` | 202 tests across 10 test files (172 Phase 3B baseline + 30 Phase 4A tests): Clean HTTPS URL, Plain HTTP, Userinfo URL, Userinfo with brand name, Misleading subdomain, Deep subdomain hierarchy, Valid Unicode IDN and punycode, IPv4 host, IPv6 bracketed host loopback, IPv6 bracketed host reserved, Default/non-default ports, Multi-label PSL suffixes (.gov.in, .co.uk), Empty URL, Overlength URL (>2048), Control characters, Embedded whitespace, Missing scheme, Unsupported schemes (ftp, javascript, data, file), Missing host, Invalid ports, Malformed hostnames, DNS label length limits, Strict zero-network boundary (patched sockets, getaddrinfo, urlopen), Ambiguous backslash rejection (7 vectors), WHATWG-compliant non-standard numeric IPv4 canonicalization (1-to-4 parts, hex, octal, single-integer), Invalid numeric IP rejection, API integration (success, 422, Cache-Control: no-store), Capabilities reporting | **202 passed, 0 failed** in 33.08s | **PASS** |
+| **Frontend Tests** | `vitest` | 60 tests across 6 test suites (51 Phase 3B baseline + 8 UrlInspector tests + 1 App integration test): Heading & initial state, Character counter & button enablement, Prominent destination host & plain-text URL rendering (no anchor tags), Userinfo warning callout, Error callout with code and advice, Stale result indication on edit, Reset state clearing, Discarding late responses, App integration (independent inspection without affecting analysis form), Updated header copy & badges (including calibrated "HTTPS scheme — connection not checked" badge) | **60 passed, 0 failed** in 27.52s | **PASS** |
+| **Type Checking** | `tsc -b` | Strict TypeScript compilation across all frontend components, types, and test files | **0 errors** | **PASS** |
+| **Linting** | `eslint .` | ESLint v9 with strict TypeScript and React Hooks rules | **0 errors, 0 warnings** | **PASS** |
+| **Production Build** | `vite build` | Production bundle generation and minification | **Built in 3.30s** (208.29 kB JS, 25.32 kB CSS) | **PASS** |
+
+---
+
+### 3. Documented System Limitations (Phase 4A)
+1. **Local Structural Analysis Only**: Local URL inspection evaluates the grammatical components of the submitted URL string. It does **not** evaluate whether the remote server exists, whether a domain is currently registered, who owns the domain, or whether the site hosts malware or phishing forms.
+2. **Planned External Reputation**: Live querying of external threat intelligence feeds (e.g. Google Safe Browsing, VirusTotal, WHOIS registration age) is planned for future milestones and is not performed.
+3. **No Safety Guarantee**: A URL with standard structure and a reputable-looking domain can still host malicious content. FraudLens does not label URLs "safe" or "verified" based on structural heuristics.

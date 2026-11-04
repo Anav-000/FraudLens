@@ -433,8 +433,9 @@ describe("FraudLens App Component", () => {
 
     expect(screen.getByText(/Text Analysis Active/i)).toBeInTheDocument();
     expect(screen.getByText(/PDF Text Extraction Available/i)).toBeInTheDocument();
+    expect(screen.getByText(/URL Inspection Available/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/Text-based PDF extraction is available\. Scanned-PDF OCR, Word document parsing \(\.docx\), and external URL reputation checks are planned capabilities/i)
+      screen.getByText(/Text-based PDF extraction and local URL structure inspection are available/i)
     ).toBeInTheDocument();
   });
 
@@ -877,5 +878,88 @@ describe("FraudLens App Component", () => {
     await user.type(messageInput, " manual edit");
     expect(screen.queryByText(/Screenshot Text Provenance Notice/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Document Text Provenance Notice/i)).not.toBeInTheDocument();
+  });
+
+  it("renders URL structure inspection section and inspects URLs independently without affecting analysis form", async () => {
+    const user = userEvent.setup();
+    const readyCapabilities: BackendCheckResult = {
+      health: { status: "ok", service: "fraudlens-api" },
+      capabilities: {
+        text_analysis: true,
+        screenshot_extraction: false,
+        document_extraction: true,
+        url_inspection: true,
+        url_reputation: false,
+        saved_cases: false,
+        ai_connection: "not_tested",
+        ai_configuration: "present",
+        ocr_languages: [],
+        ocr_prerequisite_status: "unavailable",
+      },
+    };
+
+    vi.spyOn(api, "checkBackendConnection").mockResolvedValue(readyCapabilities);
+    const inspectMock = vi.spyOn(api, "inspectUrl").mockResolvedValue({
+      submitted_url: "https://mybank.com@destination.invalid/login",
+      scheme: "https",
+      hostname: "destination.invalid",
+      hostname_ascii: "destination.invalid",
+      hostname_unicode: "destination.invalid",
+      port: null,
+      is_default_port: true,
+      path: "/login",
+      query: null,
+      fragment: null,
+      has_userinfo: true,
+      userinfo: "mybank.com",
+      is_ip_address: false,
+      ip_version: null,
+      ip_scope: null,
+      is_punycode: false,
+      registrable_domain: "destination.invalid",
+      subdomain_count: 0,
+      subdomains: [],
+      observations: [
+        {
+          id: "userinfo_present",
+          title: "Embedded Authentication / Userinfo in Netloc",
+          level: "caution",
+          description: "The URL includes userinfo credentials ('mybank.com') before an '@' delimiter.",
+        },
+      ],
+      summary: "URL parsed with destination host 'destination.invalid'.",
+      inspection_basis: "url_structure_only",
+      external_checks_performed: false,
+      notice: "URL Structure Inspection Only",
+      limitation: "This assessment is based solely on local structural analysis.",
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Backend connected:/i)).toBeInTheDocument();
+    });
+
+    const urlHeading = screen.getByRole("heading", { name: "URL Structure Inspection", level: 2 });
+    expect(urlHeading).toBeInTheDocument();
+
+    const urlInput = screen.getByLabelText(/URL to Inspect/i);
+    await user.type(urlInput, "https://mybank.com@destination.invalid/login");
+
+    const inspectBtn = screen.getByRole("button", { name: "Inspect URL" });
+    await user.click(inspectBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("destination-hostname")).toHaveTextContent("destination.invalid");
+    });
+
+    expect(inspectMock).toHaveBeenCalledWith(
+      "https://mybank.com@destination.invalid/login",
+      expect.any(AbortSignal)
+    );
+
+    // Verify existing message analysis form textarea is still empty and unaffected
+    const messageInput = screen.getByLabelText(/Suspicious Message Text/i) as HTMLTextAreaElement;
+    expect(messageInput.value).toBe("");
   });
 });

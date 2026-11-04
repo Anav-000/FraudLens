@@ -7,6 +7,7 @@ import {
   OcrLanguage,
   ScreenshotExtractionResponse,
   TextAnalysisResponse,
+  UrlInspectionResponse,
 } from "../types/api";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -321,4 +322,66 @@ export async function extractDocument(
   }
 
   return responseData as DocumentExtractionResponse;
+}
+
+export async function inspectUrl(
+  url: string,
+  signal?: AbortSignal
+): Promise<UrlInspectionResponse> {
+  const res = await fetchWithTimeout(
+    "/api/v1/inspect/url",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ url }),
+    },
+    SHORT_REQUEST_TIMEOUT_MS,
+    signal
+  );
+
+  const responseData: Record<string, any> | null = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    let message = `URL inspection failed with HTTP ${res.status}.`;
+    let code: string | undefined;
+    let reason: string | undefined;
+    let action: string | undefined;
+
+    if (responseData && typeof responseData === "object") {
+      if (typeof responseData.message === "string" && responseData.message.trim()) {
+        message = responseData.message.trim();
+      }
+      if (typeof responseData.code === "string" && responseData.code.trim()) {
+        code = responseData.code.trim();
+      }
+      if (typeof responseData.reason === "string" && responseData.reason.trim()) {
+        reason = responseData.reason.trim();
+      }
+      if (typeof responseData.action === "string" && responseData.action.trim()) {
+        action = responseData.action.trim();
+      }
+    }
+
+    throw new ApiClientError(
+      message,
+      false,
+      false,
+      code,
+      action,
+      res.status,
+      reason
+    );
+  }
+
+  if (
+    !responseData ||
+    typeof responseData !== "object" ||
+    typeof responseData.hostname !== "string"
+  ) {
+    throw new ApiClientError("Backend returned an invalid URL inspection response format.");
+  }
+
+  return responseData as UrlInspectionResponse;
 }

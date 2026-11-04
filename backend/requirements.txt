@@ -7,3 +7,5 @@ python-multipart>=0.0.18
 pillow>=10.0.0
 pytesseract>=0.3.10
 pypdf>=5.0.0,<6.0.0
+tldextract>=5.1.0
+idna>=3.7,<4.0.0
