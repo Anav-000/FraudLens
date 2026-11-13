@@ -10,6 +10,7 @@ interface DocumentExtractorProps {
   onUseExtractedText: (text: string) => void;
   onClearDocumentState?: () => void;
   hasExistingAnalysisText?: boolean;
+  onAddToCase?: (text: string, fileName?: string) => void;
 }
 
 export const DocumentExtractor: React.FC<DocumentExtractorProps> = ({
@@ -17,6 +18,7 @@ export const DocumentExtractor: React.FC<DocumentExtractorProps> = ({
   onUseExtractedText,
   onClearDocumentState,
   hasExistingAnalysisText = false,
+  onAddToCase,
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -278,8 +280,7 @@ export const DocumentExtractor: React.FC<DocumentExtractorProps> = ({
               <button
                 type="button"
                 onClick={handleFileRemove}
-                disabled={isExtracting}
-                className="px-2.5 py-1.5 text-xs text-slate-600 hover:text-rose-700 hover:bg-rose-50 border border-slate-200 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500 disabled:opacity-50"
+                className="px-2.5 py-1.5 text-xs text-slate-600 hover:text-rose-700 hover:bg-rose-50 border border-slate-200 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500"
               >
                 Remove File
               </button>
@@ -457,8 +458,18 @@ export const DocumentExtractor: React.FC<DocumentExtractorProps> = ({
               </div>
             </div>
           ) : (
-            /* Action Button: Transfer to Analysis */
-            <div className="flex items-center justify-end pt-1">
+            /* Action Buttons: Add to Case & Transfer to Analysis */
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              {onAddToCase && (
+                <button
+                  type="button"
+                  onClick={() => onAddToCase(reviewedText.trim(), selectedFile?.name)}
+                  disabled={!reviewedText.trim() || isOverCharLimit}
+                  className="px-3 py-2 text-xs font-semibold rounded bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:cursor-not-allowed transition-colors"
+                >
+                  Add to Case
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleSendToAnalysisClick}

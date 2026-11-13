@@ -25,7 +25,7 @@ def get_capabilities(
         screenshot_extraction=ocr_available,
         document_extraction=True,
         url_inspection=True,
-        url_reputation=False,
+        url_reputation=settings.is_safe_browsing_configured(),
         saved_cases=False,
         ai_connection="not_tested",
         ai_configuration="present" if config_present else "missing",

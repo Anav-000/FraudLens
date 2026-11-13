@@ -433,11 +433,17 @@ def test_api_inspect_url_overlength_rejection():
 
 
 def test_capabilities_reports_url_inspection_active():
-    response = client.get("/api/v1/capabilities")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["url_inspection"] is True
-    assert data["url_reputation"] is False
+    from app.core.config import Settings, get_settings
+    app.dependency_overrides[get_settings] = lambda: Settings(safe_browsing_api_key=None, ai_provider="none")
+    try:
+        response = client.get("/api/v1/capabilities")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["url_inspection"] is True
+        assert data["url_reputation"] is False
+    finally:
+        app.dependency_overrides.clear()
+        get_settings.cache_clear()
 
 
 # -----------------------------------------------------------------------------

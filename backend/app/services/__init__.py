@@ -29,6 +29,7 @@ from .document import (
     DocumentExecutionError,
 )
 from .url_inspector import UrlInspectorService, UrlInspectionError
+from .safe_browsing import SafeBrowsingService, UrlReputationError
 
 __all__ = [
     "GeminiAdapter",
@@ -61,4 +62,6 @@ __all__ = [
     "DocumentExecutionError",
     "UrlInspectorService",
     "UrlInspectionError",
+    "SafeBrowsingService",
+    "UrlReputationError",
 ]

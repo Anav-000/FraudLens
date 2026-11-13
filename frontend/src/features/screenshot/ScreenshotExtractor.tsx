@@ -9,12 +9,14 @@ interface ScreenshotExtractorProps {
   backendState: BackendConnectionState;
   onUseExtractedText: (text: string) => void;
   onClearScreenshotState?: () => void;
+  onAddToCase?: (text: string, fileName?: string) => void;
 }
 
 export const ScreenshotExtractor: React.FC<ScreenshotExtractorProps> = ({
   backendState,
   onUseExtractedText,
   onClearScreenshotState,
+  onAddToCase,
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -453,14 +455,26 @@ export const ScreenshotExtractor: React.FC<ScreenshotExtractorProps> = ({
               </span>
             </label>
 
-            <button
-              type="button"
-              onClick={handleSendToAnalysis}
-              disabled={!isReviewConfirmed || !reviewedText.trim() || isOverCharLimit}
-              className="px-4 py-2 text-xs font-semibold rounded bg-teal-700 text-white hover:bg-teal-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors self-end sm:self-auto"
-            >
-              Use Reviewed Text for Analysis
-            </button>
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              {onAddToCase && (
+                <button
+                  type="button"
+                  onClick={() => onAddToCase(reviewedText.trim(), selectedFile?.name)}
+                  disabled={!reviewedText.trim() || isOverCharLimit}
+                  className="px-3 py-2 text-xs font-semibold rounded bg-teal-50 border border-teal-300 text-teal-800 hover:bg-teal-100 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:cursor-not-allowed transition-colors"
+                >
+                  Add to Case
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleSendToAnalysis}
+                disabled={!isReviewConfirmed || !reviewedText.trim() || isOverCharLimit}
+                className="px-4 py-2 text-xs font-semibold rounded bg-teal-700 text-white hover:bg-teal-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+              >
+                Use Reviewed Text for Analysis
+              </button>
+            </div>
           </div>
         </div>
       )}

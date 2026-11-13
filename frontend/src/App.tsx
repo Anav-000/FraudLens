@@ -7,8 +7,16 @@ import { MessageAnalysisForm } from "./features/analysis/MessageAnalysisForm";
 import { ScreenshotExtractor } from "./features/screenshot/ScreenshotExtractor";
 import { DocumentExtractor } from "./features/document/DocumentExtractor";
 import { UrlInspector } from "./features/url/UrlInspector";
+import { CaseBuilder } from "./features/case/CaseBuilder";
 import { analyzeText, ApiClientError, checkBackendConnection } from "./lib/api";
-import { BackendConnectionState, Language, TextAnalysisResponse } from "./types/api";
+import {
+  BackendConnectionState,
+  Language,
+  TextAnalysisResponse,
+  UrlInspectionResponse,
+  UrlReputationResponse,
+} from "./types/api";
+import { Case, EvidenceItem } from "./types/case";
 
 export type TextProvenance = "none" | "screenshot" | "document";
 
@@ -24,6 +32,9 @@ export const App: React.FC = () => {
   const [textProvenance, setTextProvenance] = useState<TextProvenance>("none");
   const extractedFromScreenshot = textProvenance === "screenshot";
   const extractedFromDocument = textProvenance === "document";
+
+  // In-Memory Case Builder State
+  const [activeCase, setActiveCase] = useState<Case | null>(null);
 
   // Analysis State
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
@@ -172,6 +183,117 @@ export const App: React.FC = () => {
     }
   };
 
+  // Case Builder Handlers
+  const handleCreateCase = (name: string) => {
+    setActiveCase({
+      id: `case-${Date.now()}`,
+      name,
+      createdAt: new Date().toISOString(),
+      evidence: [],
+    });
+  };
+
+  const handleDeleteCase = () => {
+    setActiveCase(null);
+  };
+
+  const handleRemoveEvidence = (itemId: string) => {
+    setActiveCase((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        evidence: prev.evidence.filter((item) => item.id !== itemId),
+      };
+    });
+  };
+
+  const handleAddEvidenceItem = (item: Omit<EvidenceItem, "id" | "addedAt">) => {
+    const newItem: EvidenceItem = {
+      ...item,
+      id: `evidence-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      addedAt: new Date().toISOString(),
+    };
+    setActiveCase((prev) => {
+      if (!prev) {
+        return {
+          id: `case-${Date.now()}`,
+          name: "Untitled Investigation Case",
+          createdAt: new Date().toISOString(),
+          evidence: [newItem],
+        };
+      }
+      return {
+        ...prev,
+        evidence: [...prev.evidence, newItem],
+      };
+    });
+  };
+
+  const handleAddAnalysisToCase = (result: TextAnalysisResponse) => {
+    handleAddEvidenceItem({
+      sourceType: "text_analysis",
+      title: "Suspicious Message Analysis",
+      payload: {
+        sourceType: "text_analysis",
+        submittedText: text,
+        result,
+      },
+    });
+  };
+
+  const handleAddScreenshotTextToCase = (extractedText: string, fileName?: string) => {
+    handleAddEvidenceItem({
+      sourceType: "extracted_text",
+      title: "Screenshot Extracted Text",
+      payload: {
+        sourceType: "extracted_text",
+        extractionType: "screenshot",
+        fileName,
+        extractedText,
+      },
+    });
+  };
+
+  const handleAddDocumentTextToCase = (extractedText: string, fileName?: string) => {
+    handleAddEvidenceItem({
+      sourceType: "extracted_text",
+      title: "Document Extracted Text",
+      payload: {
+        sourceType: "extracted_text",
+        extractionType: "document",
+        fileName,
+        extractedText,
+      },
+    });
+  };
+
+  const handleAddUrlStructureToCase = (result: UrlInspectionResponse, urlString: string) => {
+    handleAddEvidenceItem({
+      sourceType: "url_structure",
+      title: `URL Structure (${result.hostname})`,
+      payload: {
+        sourceType: "url_structure",
+        url: urlString,
+        result,
+      },
+    });
+  };
+
+  const handleAddUrlReputationToCase = (result: UrlReputationResponse, urlString: string) => {
+    handleAddEvidenceItem({
+      sourceType: "url_reputation",
+      title: `Safe Browsing: ${result.status === "threat_match" ? "Threat Match" : "No Known Match"}`,
+      payload: {
+        sourceType: "url_reputation",
+        url: urlString,
+        result,
+        expires_at: result.expires_at ?? null,
+        checked_at: result.checked_at,
+        is_stale: result.is_stale,
+      },
+    });
+  };
+
   const handleAnalyze = async () => {
     const trimmed = text.trim();
     if (!trimmed) {
@@ -230,6 +352,14 @@ export const App: React.FC = () => {
           isRetrying={isRetryingBackend}
         />
 
+        {/* Case Builder (In-Memory Investigative Case) */}
+        <CaseBuilder
+          currentCase={activeCase}
+          onCreateCase={handleCreateCase}
+          onDeleteCase={handleDeleteCase}
+          onRemoveEvidence={handleRemoveEvidence}
+        />
+
         {/* Phase 3A: Screenshot Text Extraction (Local OCR) */}
         <section aria-labelledby="screenshot-extraction-heading">
           <h2 id="screenshot-extraction-heading" className="sr-only">
@@ -239,6 +369,7 @@ export const App: React.FC = () => {
             backendState={backendState}
             onUseExtractedText={handleUseExtractedText}
             onClearScreenshotState={handleClearScreenshotState}
+            onAddToCase={handleAddScreenshotTextToCase}
           />
         </section>
 
@@ -252,11 +383,16 @@ export const App: React.FC = () => {
             onUseExtractedText={handleUseExtractedDocumentText}
             onClearDocumentState={handleClearDocumentState}
             hasExistingAnalysisText={Boolean(text.trim())}
+            onAddToCase={handleAddDocumentTextToCase}
           />
         </section>
 
-        {/* Phase 4A: Local URL Structure Inspection */}
-        <UrlInspector />
+        {/* Phase 4A/4B: Local URL Structure Inspection & Reputation */}
+        <UrlInspector
+          backendState={backendState}
+          onAddStructureToCase={handleAddUrlStructureToCase}
+          onAddReputationToCase={handleAddUrlReputationToCase}
+        />
 
         {/* Phase 2B Interactive Feature: Suspicious Message Input & Analysis */}
         <section aria-labelledby="message-analysis-heading">
@@ -292,6 +428,7 @@ export const App: React.FC = () => {
               result={analysisResult}
               isStale={isResultStale}
               onClear={handleClearResult}
+              onAddToCase={handleAddAnalysisToCase}
             />
           </section>
         )}
@@ -301,7 +438,7 @@ export const App: React.FC = () => {
       </main>
 
       <footer className="border-t border-slate-200 bg-white py-6 px-4 text-center text-xs text-slate-500">
-        <p>FraudLens • Independent Portfolio Project by Arnav Kumar • Phase 4A Build</p>
+        <p>FraudLens • Independent Portfolio Project by Arnav Kumar • Phase 4B Build</p>
       </footer>
     </div>
   );

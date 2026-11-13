@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentExtractor } from "../features/document/DocumentExtractor";
@@ -257,8 +257,9 @@ describe("DocumentExtractor Component", () => {
     await user.click(removeBtn);
 
     // Resolve old in-flight request afterward
-    resolveExtraction(sampleSuccessResponse);
-    await Promise.resolve();
+    await act(async () => {
+      resolveExtraction(sampleSuccessResponse);
+    });
 
     // Must not restore review text or enable transfer
     expect(screen.queryByDisplayValue(sampleSuccessResponse.combined_text)).not.toBeInTheDocument();
@@ -272,7 +273,9 @@ describe("DocumentExtractor Component", () => {
       resolveExtraction = resolve;
     });
 
-    vi.spyOn(api, "extractDocument").mockReturnValue(extractionPromise);
+    const extractSpy = vi.spyOn(api, "extractDocument");
+    // Initial extraction succeeds immediately so textarea is populated
+    extractSpy.mockResolvedValueOnce(sampleSuccessResponse);
 
     render(
       <DocumentExtractor
@@ -288,17 +291,25 @@ describe("DocumentExtractor Component", () => {
 
     await user.click(screen.getByRole("button", { name: /Extract Text/i }));
 
-    // User types manual edit
-    const textarea = screen.queryByRole("textbox", { name: /Extracted Document Text/i });
-    if (textarea) {
-      await user.type(textarea, "User pre-typed content.");
-    }
+    const textarea = await screen.findByRole("textbox", { name: /Extracted Document Text/i });
+
+    // Next extraction is delayed
+    extractSpy.mockReturnValueOnce(extractionPromise);
+    await user.click(screen.getByRole("button", { name: /Extract Text/i }));
+
+    // User types manual edit while the second extraction is in flight
+    await user.type(textarea, " User correction typed here.");
 
     // Resolve late extraction
-    resolveExtraction(sampleSuccessResponse);
-    await Promise.resolve();
+    await act(async () => {
+      resolveExtraction({
+        ...sampleSuccessResponse,
+        combined_text: "Late overwritten text that should be ignored",
+      });
+    });
 
     // Review text must not be overwritten if user edited
-    expect(screen.queryByDisplayValue(sampleSuccessResponse.combined_text)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue(/Late overwritten text/i)).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue(/User correction typed here/i)).toBeInTheDocument();
   });
 });

@@ -4,7 +4,7 @@
 
 **Author**: Arnav Kumar  
 **Project Type**: Independent Portfolio Project  
-**Current Phase**: Phase 4A — Local URL Structure Inspection & Multi-Modal Analysis (Offline Verified)
+**Current Phase**: Phase 4B — Optional Google Safe Browsing URL Reputation (Offline Verified)
 
 ---
 
@@ -149,6 +149,28 @@ FraudLens helps everyday users evaluate suspicious communications before sharing
   - Submitted URL is displayed strictly as **plain text** with word break (`break-all`), **NEVER as an `<a>` tag or clickable HTML link**.
   - Edit invalidation marks previous findings as stale; `AbortController` discards pending requests on edit, reset, or re-inspection.
 
+
+
+### E. Optional Google Safe Browsing URL Reputation (Phase 4B)
+- **External Threat Reputation Engine**:
+  - `POST /api/v1/inspect/url/reputation` queries Google Safe Browsing for known threat matches (e.g. `MALWARE`, `SOCIAL_ENGINEERING`, `UNWANTED_SOFTWARE`, `POTENTIALLY_HARMFUL_APPLICATION`).
+  - **Explicit Opt-In & Consent Requirement**: Completely separate from offline structural inspection. Requires explicit user consent via an unchecked checkbox before sending any request.
+  - **Pre-flight Privacy & Destination Sanitization**:
+    - URL fragments (`#...`) are stripped prior to external transmission to prevent leaking client state.
+    - Pre-flight destination host checks reject private, loopback, link-local, and reserved IP destinations with HTTP 422 `FORBIDDEN_DESTINATION`.
+    - Zero requests are sent to the target destination URL itself.
+- **Protocol Adapters & Verified Local Configuration**:
+  - **Verified Local Setup**: `SAFE_BROWSING_VERSION=v4` in `backend/.env`.
+  - **v4 Lookup Adapter**: Uses Google's documented `POST /v4/threatMatches:find` JSON protocol. Returns `no_known_match` for the documented empty JSON object `{}` with `expires_at=null` (no invented default cache duration) and keeps the result out of the backend cache so fresh queries remain up to date. Threat matches use provider-indicated per-match `cacheDuration`, and multi-threat matches are bounded by the earliest match expiry.
+  - **v5 Fail-Closed Handling**: When Google Safe Browsing v5 returns a binary Protobuf response from `GET /v5/urls:search`, the FraudLens reputation endpoint returns HTTP 200 with `status="unavailable"`, `error_code="MALFORMED_PROVIDER_RESPONSE"`, and `error_reason="unverified_binary_schema"`. The UI displays “Service Unavailable.”
+  - **Cache Key Version Isolation**: Cache keys are scoped by protocol version (`f"{version}:{checked_url}"`) so v4 and v5 lookups never share or reuse cached responses.
+- **Attribution, Freshness & Disclaimers**:
+  - Prominent mandatory Google attribution: *"Data provided by Google Safe Browsing."*
+  - Conspicuous advisory: *"No known threat match does not guarantee that a link is safe or legitimate. New phishing and malware campaigns may not yet be indexed."*
+  - Maximum warning freshness capped at 30 minutes (`MAX_WARNING_FRESHNESS_SECONDS = 1800`).
+  - Displayed URLs and inspected targets are strictly rendered as plain text (never clickable `<a>` links).
+  - Editing the URL input immediately revokes consent and marks previous reputation results as stale.
+
 ---
 
 ## 3. Selected AI Model & Documentation Sources
@@ -243,6 +265,19 @@ To enable screenshot text extraction on Windows:
    ```
 
 ---
+
+
+### Step 3B: (Optional) Configure Google Safe Browsing (Phase 4B)
+
+To enable external URL reputation checking:
+1. Obtain a Google Safe Browsing API key from Google Cloud Console.
+2. In `backend/.env`, set:
+   ```env
+   SAFE_BROWSING_API_KEY=YOUR_ACTUAL_SAFE_BROWSING_KEY_HERE
+   SAFE_BROWSING_VERSION=v4
+   ```
+   *(Note: The verified local setup uses `SAFE_BROWSING_VERSION=v4`. Do not commit or share this key).*
+3. If unconfigured or key is absent, URL reputation checks gracefully return HTTP 503 `SAFE_BROWSING_NOT_CONFIGURED` while local URL structure inspection remains fully functional.
 
 ### Step 4: Run the Synthetic Smoke Test (CLI)
 
@@ -346,9 +381,9 @@ npm run lint
 npm run build
 ```
 
-**Results (Phase 3B Final)**:
-- **Backend Tests (pytest)**: 167 tests passed in 20.65s.
-- **Frontend Tests (Vitest)**: 49 tests passed in 19.70s.
+**Results (Phase 4B Final)**:
+- **Backend Tests (pytest)**: 362 passed, 20 warnings in 112.57s.
+- **Frontend Tests (Vitest)**: 75 passed in 44.50s.
 - **TypeScript (tsc -b)**: 0 errors.
 - **ESLint**: 0 errors, 0 warnings.
 - **Vite build**: production bundle created successfully in `dist/` (195.56 kB JS, 23.55 kB CSS).
@@ -482,6 +517,24 @@ Use this checklist with fictional test URLs to verify the URL structure inspecti
    - Click Reset -> verify input and results are cleared.
 
 ---
+
+
+---
+
+## 10B. Manual Safe Browsing Test Checklist (Phase 4B)
+
+With `SAFE_BROWSING_VERSION=v4` configured in `backend/.env`:
+
+1. **Successful No-Match Freshness**:
+   - Navigate to `http://127.0.0.1:5173`.
+   - Enter `https://example.com` in the URL Inspector.
+   - Check the consent box and click "Check Reputation (Safe Browsing)".
+   - Verify result displays "No Known Threat Matches" with attribution and non-guarantee advisory, **without an immediate expiry banner**.
+2. **Dynamic URL Modification Staleness**:
+   - Edit the URL in the input field.
+   - Verify consent is immediately revoked and the previous result is marked **stale**.
+3. **v5 Fail-Closed Safety**:
+   - If `SAFE_BROWSING_VERSION=v5` is tested and a binary response is returned, verify that it safely fails closed and displays Service Unavailable rather than guessing field numbers.
 
 ## 11. Troubleshooting
 

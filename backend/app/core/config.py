@@ -32,6 +32,17 @@ class Settings(BaseSettings):
     ai_model: str = "gemini-3.5-flash-lite"
     ai_api_key: SecretStr | None = None
     tesseract_cmd: str | None = None
+    safe_browsing_api_key: SecretStr | None = None
+    safe_browsing_version: str = "v5"
+
+    @field_validator("safe_browsing_version")
+    @classmethod
+    def validate_safe_browsing_version(cls, value: str) -> str:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("v4", "v5"):
+                return normalized
+        raise ValueError("safe_browsing_version must be either 'v4' or 'v5'")
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
@@ -47,6 +58,20 @@ class Settings(BaseSettings):
         if self.ai_api_key is None:
             return False
         raw_key = self.ai_api_key.get_secret_value().strip()
+        if not raw_key:
+            return False
+        if raw_key.lower() in PLACEHOLDER_KEYS:
+            return False
+        return True
+
+    def is_safe_browsing_configured(self) -> bool:
+        """
+        Validates whether a non-empty, non-placeholder Safe Browsing API key is configured.
+        Truthfully reflects configuration without asserting that the key is verified to work.
+        """
+        if self.safe_browsing_api_key is None:
+            return False
+        raw_key = self.safe_browsing_api_key.get_secret_value().strip()
         if not raw_key:
             return False
         if raw_key.lower() in PLACEHOLDER_KEYS:

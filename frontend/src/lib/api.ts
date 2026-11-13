@@ -8,12 +8,14 @@ import {
   ScreenshotExtractionResponse,
   TextAnalysisResponse,
   UrlInspectionResponse,
+  UrlReputationResponse,
 } from "../types/api";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 const SHORT_REQUEST_TIMEOUT_MS = 5000;
 const ANALYSIS_REQUEST_TIMEOUT_MS = 38000; // Allow 30s provider timeout + network overhead to report backend diagnostics cleanly
 const EXTRACTION_REQUEST_TIMEOUT_MS = 25000; // 20s backend timeout + network overhead
+const REPUTATION_REQUEST_TIMEOUT_MS = 15000; // 10s backend timeout + network overhead
 
 export class ApiClientError extends Error {
   constructor(
@@ -384,4 +386,79 @@ export async function inspectUrl(
   }
 
   return responseData as UrlInspectionResponse;
+}
+export function previewUrlForReputation(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    const hashIndex = trimmed.indexOf("#");
+    return hashIndex !== -1 ? trimmed.slice(0, hashIndex) : trimmed;
+  }
+}
+
+export async function checkUrlReputation(
+  url: string,
+  consent: boolean,
+  signal?: AbortSignal
+): Promise<UrlReputationResponse> {
+  const res = await fetchWithTimeout(
+    "/api/v1/inspect/url/reputation",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ url, consent }),
+    },
+    REPUTATION_REQUEST_TIMEOUT_MS,
+    signal
+  );
+
+  const responseData: Record<string, any> | null = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    let message = `URL reputation check failed with HTTP ${res.status}.`;
+    let code: string | undefined;
+    let reason: string | undefined;
+    let action: string | undefined;
+
+    if (responseData && typeof responseData === "object") {
+      if (typeof responseData.message === "string" && responseData.message.trim()) {
+        message = responseData.message.trim();
+      }
+      if (typeof responseData.code === "string" && responseData.code.trim()) {
+        code = responseData.code.trim();
+      }
+      if (typeof responseData.reason === "string" && responseData.reason.trim()) {
+        reason = responseData.reason.trim();
+      }
+      if (typeof responseData.action === "string" && responseData.action.trim()) {
+        action = responseData.action.trim();
+      }
+    }
+
+    throw new ApiClientError(
+      message,
+      false,
+      false,
+      code,
+      action,
+      res.status,
+      reason
+    );
+  }
+
+  if (
+    !responseData ||
+    typeof responseData !== "object" ||
+    typeof responseData.status !== "string"
+  ) {
+    throw new ApiClientError("Backend returned an invalid URL reputation response format.");
+  }
+
+  return responseData as UrlReputationResponse;
 }

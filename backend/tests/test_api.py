@@ -15,6 +15,7 @@ def default_client():
         ai_provider="none",
         ai_model="gemini-3.5-flash-lite",
         ai_api_key=None,
+        safe_browsing_api_key=None,
     )
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: isolated_settings
