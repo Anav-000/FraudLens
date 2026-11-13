@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Case, EvidenceItem, EvidencePayload, UrlReputationPayload } from "../../types/case";
 import { CaseSummaryPanel } from "./CaseSummaryPanel";
+import { downloadCaseReport } from "./caseReportUtils";
 
 const UrlReputationEvidenceView: React.FC<{ payload: UrlReputationPayload }> = ({ payload }) => {
   const { url, result, expires_at, checked_at, is_stale } = payload;
@@ -423,9 +424,42 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
               </div>
             </div>
 
-            <div className="text-xs font-semibold text-slate-700 bg-white px-3 py-1.5 rounded border border-slate-200 self-start sm:self-auto">
-              {currentCase.evidence.length} evidence item{currentCase.evidence.length === 1 ? "" : "s"}
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <span className="text-xs font-semibold text-slate-700 bg-white px-3 py-1.5 rounded border border-slate-200">
+                {currentCase.evidence.length} evidence item{currentCase.evidence.length === 1 ? "" : "s"}
+              </span>
+              <button
+                type="button"
+                data-testid="download-case-report-btn"
+                onClick={() => downloadCaseReport(currentCase)}
+                disabled={currentCase.evidence.length === 0}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border ${
+                  currentCase.evidence.length === 0
+                    ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                    : "bg-teal-700 hover:bg-teal-800 text-white border-teal-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                }`}
+                title={
+                  currentCase.evidence.length === 0
+                    ? "Add evidence items to export a case report."
+                    : "Download plain-text case report"
+                }
+              >
+                Download Case Report
+              </button>
             </div>
+          </div>
+
+          {/* Sensitive Information Export Disclosure */}
+          <div
+            data-testid="case-report-sensitivity-notice"
+            className="rounded-lg bg-amber-50/70 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2.5"
+          >
+            <span aria-hidden="true" className="shrink-0 text-amber-700 font-bold mt-0.5">
+              ℹ️
+            </span>
+            <p className="leading-relaxed">
+              <strong>Export Notice:</strong> The downloaded case report includes your saved evidence items in plain text, which may contain sensitive personal or financial information. Only share exported files with trusted parties.
+            </p>
           </div>
 
           {/* Evidence-Linked Case Summary Panel */}
