@@ -962,4 +962,104 @@ describe("FraudLens App Component", () => {
     const messageInput = screen.getByLabelText(/Suspicious Message Text/i) as HTMLTextAreaElement;
     expect(messageInput.value).toBe("");
   });
+
+  it("creates a named case, adds message analysis and URL structure findings, and deletes case", async () => {
+    const user = userEvent.setup();
+
+    vi.spyOn(api, "checkBackendConnection").mockResolvedValue(readyCapabilities);
+    vi.spyOn(api, "analyzeText").mockResolvedValue(sampleSuccessAnalysis);
+    vi.spyOn(api, "inspectUrl").mockResolvedValue({
+      submitted_url: "https://example.com/login",
+      scheme: "https",
+      hostname: "example.com",
+      hostname_ascii: "example.com",
+      hostname_unicode: "example.com",
+      port: null,
+      is_default_port: true,
+      path: "/login",
+      query: null,
+      fragment: null,
+      has_userinfo: false,
+      userinfo: null,
+      is_ip_address: false,
+      ip_version: null,
+      ip_scope: null,
+      is_punycode: false,
+      registrable_domain: "example.com",
+      subdomain_count: 0,
+      subdomains: [],
+      observations: [],
+      summary: "Clean structure.",
+      inspection_basis: "url_structure_only",
+      external_checks_performed: false,
+      notice: "Notice",
+      limitation: "Limitation",
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Backend connected:/i)).toBeInTheDocument();
+    });
+
+    // 1. Create a named case
+    const caseNameInput = screen.getByLabelText(/Create a New Case/i);
+    await user.type(caseNameInput, "Phishing Bank Incident #101");
+    const createCaseBtn = screen.getByRole("button", { name: /Create Case/i });
+    await user.click(createCaseBtn);
+
+    expect(screen.getByTestId("active-case-name")).toHaveTextContent("Phishing Bank Incident #101");
+    expect(screen.getByText(/0 evidence items/i)).toBeInTheDocument();
+
+    // 2. Perform message analysis and add to case
+    const messageInput = screen.getByLabelText(/Suspicious Message Text/i);
+    await user.type(messageInput, "Urgent: Your account is locked. Verify at http://fakebank.example.invalid now.");
+    const analyzeBtn = screen.getByRole("button", { name: /Analyze Message/i });
+    await user.click(analyzeBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/False Urgency/i)).toBeInTheDocument();
+    });
+
+    // Click "Add to Case" in analysis results
+    const addAnalysisToCaseBtn = screen.getByRole("button", { name: "Add to Case" });
+    await user.click(addAnalysisToCaseBtn);
+
+    expect(screen.getAllByText(/1 evidence item/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByTestId("evidence-message-text")).toHaveTextContent("Urgent: Your account is locked");
+
+    // 3. Perform URL inspection and add to case
+    const urlInput = screen.getByLabelText(/URL to Inspect/i);
+    await user.type(urlInput, "https://example.com/login");
+    const inspectBtn = screen.getByRole("button", { name: "Inspect URL" });
+    await user.click(inspectBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("destination-hostname")).toHaveTextContent("example.com");
+    });
+
+    const addStructureToCaseBtn = screen.getByRole("button", { name: "Add Structural Findings to Case" });
+    await user.click(addStructureToCaseBtn);
+
+    expect(screen.getAllByText(/2 evidence items/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByTestId("evidence-url-structure-plain")).toHaveTextContent("https://example.com/login");
+
+    // 4. Remove one item
+    const removeBtns = screen.getAllByRole("button", { name: /Remove evidence/i });
+    expect(removeBtns.length).toBe(2);
+    const firstRemoveBtn = removeBtns[0];
+    expect(firstRemoveBtn).toBeDefined();
+    if (firstRemoveBtn) {
+      await user.click(firstRemoveBtn);
+    }
+
+    expect(screen.getAllByText(/1 evidence item/i).length).toBeGreaterThanOrEqual(1);
+
+    // 5. Delete the case
+    const deleteCaseBtn = screen.getByRole("button", { name: /Delete Case/i });
+    await user.click(deleteCaseBtn);
+
+    // Form returns to create case view
+    expect(screen.getByLabelText(/Create a New Case/i)).toBeInTheDocument();
+  });
 });

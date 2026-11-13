@@ -5,6 +5,8 @@ interface AnalysisResultViewProps {
   result: TextAnalysisResponse;
   isStale?: boolean;
   onClear?: () => void;
+  onAddToCase?: (result: TextAnalysisResponse) => void;
+  activeCaseName?: string | null;
 }
 
 const ASSESSMENT_META: Record<
@@ -53,6 +55,7 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
   result,
   isStale = false,
   onClear,
+  onAddToCase,
 }) => {
   const meta = ASSESSMENT_META[result.assessment] || ASSESSMENT_META.insufficient_information;
 
@@ -95,15 +98,26 @@ export const AnalysisResultView: React.FC<AnalysisResultViewProps> = ({
             </span>
           </div>
 
-          {onClear && (
-            <button
-              type="button"
-              onClick={onClear}
-              className="text-xs font-semibold text-slate-600 hover:text-slate-800 underline focus:outline-none focus:ring-2 focus:ring-teal-500"
-            >
-              Clear Result
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {onAddToCase && (
+              <button
+                type="button"
+                onClick={() => onAddToCase(result)}
+                className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-teal-700 bg-teal-50 border border-teal-200 rounded hover:bg-teal-100 focus:outline-none focus:ring-2 focus:ring-teal-500"
+              >
+                Add to Case
+              </button>
+            )}
+            {onClear && (
+              <button
+                type="button"
+                onClick={onClear}
+                className="text-xs font-semibold text-slate-600 hover:text-slate-800 underline focus:outline-none focus:ring-2 focus:ring-teal-500"
+              >
+                Clear Result
+              </button>
+            )}
+          </div>
         </div>
 
         <div>

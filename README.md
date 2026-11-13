@@ -3,257 +3,371 @@
 > “Spot the warning signs. Verify your next step.”
 
 **Author**: Arnav Kumar  
-**Project Type**: Independent Portfolio Project  
-**Current Phase**: Phase 4A — Local URL Structure Inspection & Multi-Modal Analysis (Offline Verified)
+**Project Type**: Full-Stack Defensive AI & Security Engineering Portfolio Project
+**Status**: Production-Ready MVP (Offline & Locally Verified)
+**Core Technologies**: React 18, TypeScript, TailwindCSS, Vite, FastAPI, Python 3.12, Google GenAI SDK (`gemini-3.5-flash-lite`), Google Safe Browsing API (v4 Lookup), Tesseract OCR, PyPDF.
 
 ---
 
-## 1. What FraudLens Aims to Do
+## 1. Executive Summary & Mission
 
-FraudLens helps everyday users evaluate suspicious communications before sharing sensitive personal details or transferring funds. When users encounter dubious job offers demanding upfront fees, urgent payment requests, phishing messages, or unfamiliar links, FraudLens provides:
-- Clear evidence-linked warning signs and psychological manipulation tactics.
-- Highlighted inconsistencies and factual discrepancies.
-- Verified external reputation context (e.g. domain and URL reputation).
-- Explicit unknowns and areas where evidence is lacking.
-- Practical, safe verification steps the user can take next.
-- Bilingual explanations in English and Hindi.
-- Local screenshot text extraction with human-in-the-loop review.
+FraudLens is an open-source defensive decision-support workbench designed to help everyday users evaluate suspicious communications before sharing personal information, verifying sensitive credentials, or transferring money.
 
----
-
-## 2. What Works in Phase 3A
-
-### A. Local Screenshot Text Extraction (Phase 3A)
-- **Local OCR Engine**:
-  - `POST /api/v1/extract/screenshot` extracts text from uploaded screenshots using local Tesseract OCR and Pillow (`PIL`).
-  - **Zero External Transmission of Images**: Screenshot processing runs **100% locally on the backend**. The screenshot image is **never sent to Google Gemini or any external service**.
-- **Separate OCR & Explanation Languages**:
-  - `ocr_language`: Controls optical character recognition (`"eng"` for English, `"hin"` for Hindi).
-  - `language`: Controls downstream AI risk explanation generation (`"en"` or `"hi"`).
-- **Security & Resource Limits**:
-  - **Formats**: Strictly PNG and JPEG (`ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG"}`), verified by Pillow file headers to prevent extension/MIME spoofing.
-  - **File Size**: Maximum 5 MiB (`5 * 1024 * 1024` bytes). Ingested in 64 KiB chunks with early abort (`FILE_TOO_LARGE` HTTP 413).
-  - **Decoded Dimensions**: Maximum 12 megapixels (`12,000,000` pixels). Protected against Pillow decompression bombs (`IMAGE_TOO_LARGE` HTTP 422).
-  - **Static Only**: Multi-frame GIFs, animated PNGs, and multi-frame TIFFs are rejected (`ANIMATED_IMAGE_REJECTED` HTTP 422).
-  - **Subprocess Timeout**: 20-second timeout with explicit child process kill (`proc.kill()` and `await proc.wait()`) preventing orphaned worker processes.
-  - **Concurrency**: Bounded by an `asyncio.Semaphore(3)` to protect CPU resources.
-  - **Resource Cleanup**: In-memory processing; temporary preprocessed files are unconditionally unlinked in `finally:` blocks.
-  - **Character Limits**: Extractions exceeding 10,000 characters are rejected with HTTP 422 `TEXT_TOO_LONG`, instructing the user to crop the screenshot.
-  - **Cache Protection**: `Cache-Control: no-store` on all extraction responses and error responses.
-- **Truthful Capabilities Reporting**:
-  - `GET /api/v1/capabilities` dynamically checks whether Tesseract is installed.
-  - If Tesseract is not installed on the host, it truthfully reports `screenshot_extraction: false` and `ocr_prerequisite_status: "missing_prerequisites"`. Working text analysis is **never** disabled when OCR is unavailable.
-- **Human-in-the-Loop Review Area**:
-  - Accessible dropzone with PNG/JPEG preview, file details, and preview URL revocation (`URL.revokeObjectURL`).
-  - Extracted text is presented in an editable review textarea with prominent warning: *"OCR may misread names, amounts, URLs, or characters."*
-  - Requires user to check `[ ] I have reviewed and confirmed the extracted text for accuracy` before enabling transfer to analysis.
-  - **Review Invalidation**: Modifying the reviewed text automatically unchecks the confirmation box.
-  - Replacing or clearing the screenshot invalidates prior extractions.
-  - Clear provenance badge upon transfer: *"Analysis evaluates the submitted reviewed text only. Findings concern textual content, not image authenticity, visual tampering, sender identity, or URL reputation."*
-
-### B. Local Text-Based PDF Document Extraction (Phase 3B)
-- **Local PDF Parsing Engine**:
-  - `POST /api/v1/extract/document` extracts embedded text from uploaded PDF documents using **`pypdf`** (`pypdf>=5.0.0,<6.0.0`, version 5.9.0, BSD-3-Clause license).
-  - **Zero External Transmission of Documents**: Document processing runs **100% locally on the backend**. The PDF file is **never sent to Google Gemini or any external service**.
-- **Worker Process Isolation**:
-  - Untrusted PDF parsing runs in an independent child process (`app.services.pdf_worker`) managed by `_SyncDocumentRunner`.
-  - Guarantees: Timeouts (20.0s) and cancellations forcibly kill the worker process (`proc.kill()`) and reap it via `proc.wait()`.
-  - Non-blocking `cancel()` does not stall the asyncio event loop on Windows with Uvicorn `--reload`.
-  - Shielded cleanup ensures the worker process is completely reaped before releasing the concurrency slot or unlinking temporary files.
-  - Concurrency: Document extraction uses `_document_semaphore = asyncio.Semaphore(3)`, operating independently from OCR's `_ocr_semaphore = asyncio.Semaphore(3)`. Up to 3 OCR workers and 3 PDF workers (up to 6 extraction subprocesses total) can execute concurrently.
-- **Strict Security & Resource Limits**:
-  - **File Size**: Maximum 5 MiB (`5 * 1024 * 1024` bytes). Pre-spool bounded upload middleware rejects oversized uploads before disk spooling.
-  - **Document Length**: Maximum 10 pages (`MAX_DOCUMENT_PAGES = 10`). Documents exceeding 10 pages are rejected with HTTP 422 `PAGE_LIMIT_EXCEEDED` (never silently truncated).
-  - **Character Limits**: Maximum 10,000 characters (`MAX_EXTRACTED_CHARACTERS = 10_000`). Text exceeding this is rejected with HTTP 422 `TEXT_TOO_LONG`.
-  - **Enforceable Memory Limit**: Windows Job Objects enforce a 256 MiB virtual memory ceiling per worker process on Windows before untrusted PDF parsing starts. Exceeding this triggers `MemoryError` safely mapped to `DOCUMENT_EXTRACTION_FAILED`. Best-effort RLIMIT_AS applies on POSIX if available.
-  - **Bounded I/O & Output Size**: Child `stdout` and `stderr` are discarded via `subprocess.DEVNULL`. Worker output JSON is checked and restricted to $\le 1$ MiB (`MAX_WORKER_RESULT_BYTES = 1024 * 1024`) both before worker write and before parent read/decode.
-  - **Security Restrictions**: Pure-Python reader does not execute PDF JavaScript, does not open embedded file attachments, does not follow external links/URIs, and does not render visual raster graphics.
-  - **Encryption**: Encrypted / password-protected PDFs are rejected with safe, actionable error `ENCRYPTED_PDF_REJECTED` (HTTP 422). Passwords are not accepted in this phase.
-- **Handling Pages Without Extractable Text**:
-  - If entire document has no usable text: rejected with HTTP 422 `EMPTY_DOCUMENT_EXTRACTION`, explaining that scanned PDFs or image-only documents are not supported.
-  - If only some pages have no text: returns structured page information, collects `empty_pages`, and includes a calibrated warning that extraction may be incomplete. Does not claim every empty page is necessarily scanned.
-- **Human-in-the-Loop Review Area**:
-  - Accessible dropzone with PDF validation, filename, file size, and remove file control.
-  - Extracted text is presented in an editable review textarea with prominent warning: *"Extraction can alter reading order, spacing, and characters, and may omit content. Confirmation is an opportunity to correct errors, not a guarantee of accuracy."*
-  - Requires user to check `[ ] I have reviewed and confirmed the extracted text for accuracy` before enabling transfer to analysis.
-  - **Review Invalidation**: Modifying the reviewed text automatically unchecks the confirmation box.
-  - **Nonempty Input Overwrite Protection**: Prompts for explicit confirmation before replacing existing analysis input.
-  - Clear provenance badge upon transfer: *"Document Text Provenance Notice: Analysis evaluates the submitted reviewed text only. Findings concern textual content, not document authenticity, signatures, visual tampering, sender identity, or URL reputation."*
-
-### C. Suspicious Text Analysis (Phase 2B Baseline)
-- **End-to-End Suspicious Text Analysis**:
-  - Full flow: paste message → select explanation language (`English` or `हिन्दी`) → Analyze Message → validated assessment with quoted evidence, uncertainties, and practical verification steps.
-  - Powered by Google Gemini (`gemini-3.5-flash-lite`) using the official `google-genai` Python SDK.
-  - `POST /api/v1/analyze/text` receives `{ text, language }`, validates length (1–10,000 chars), enforces strict prompt injection isolation, and returns structured findings.
-- **Defensive Prompt & Pipeline Isolation**:
-  - Untrusted user text is isolated inside `<UNTRUSTED_MESSAGE>` payload delimiters.
-  - Instructions are delivered via trusted `types.GenerateContentConfig(system_instruction=...)` directing the model to evaluate the text passively as evidence and ignore any embedded command directives.
-  - External search grounding and tools are explicitly disabled (`tools=None`).
-  - Provider-side developer interaction logging is disabled where supported (`store=False`).
-- **Verbatim Evidence Grounding & Cross-Field Consistency**:
-  - Every cited `evidence_quote` is validated on the backend to be an exact verbatim substring of the submitted text (`quote in submitted_text`); fabricated or non-matching quotes cause immediate rejection (`INVALID_RESPONSE`).
-  - Strict cross-field invariants: `warning_signs_found` requires at least 1 warning sign; `no_clear_warning_signs` and `insufficient_information` strictly require an empty warning signs array.
-  - Requested language matching: The model output's `language` tag must match the requested language.
-- **Plain-Text URLs & Safer Evidence Presentation**:
-  - Quoted evidence strings containing URLs are strictly rendered as plain-text strings in monospace blockquotes, never as clickable HTML links (`<a>` tags).
-- **Nuanced Risk Assessment & Prominent Disclaimers**:
-  - `warning_signs_found`: High-visibility badge, categorized findings, and practical verification steps.
-  - `no_clear_warning_signs`: Slate/neutral badge with a prominent, unmissable notice:
-    > *“Important: This does not prove the message or sender is legitimate. Scammers frequently use subtle, multi-stage, or tailored communications that appear harmless in isolation.”*
-  - `insufficient_information`: Cautionary badge indicating that message text lacks context to evaluate safety.
-- **Application Provenance & Limitations**:
-  - Every response explicitly notes `analysis_basis="submitted_text_only"`, `external_checks_performed=False`, and provides a clear limitation notice stating that AI analysis does not constitute legal or cybersecurity advice.
-  - `Cache-Control: no-store` header is enforced on all analysis endpoints.
-- **Client Resilience & Controls**:
-  - Input preservation: User text is preserved across network retries and error conditions.
-  - Loading feedback: Spinners and status indicators without misleading fake progress percentages.
-  - Duplicate prevention: Analyze button is disabled while an analysis request is in flight.
-  - Request aborting: Clear / Reset aborts in-flight requests via `AbortController` and resets UI state. *(Note: browser-side abort does not guarantee remote provider cancellation).*
-  - Stale detection: Modifying text or switching language while viewing a previous result flags the card as stale until re-evaluated.
-- **Live Analysis Status**:
-  - Autonomous implementation was completed using comprehensive offline test mocks. **Live text analysis status: NOT RUN.** Manual verification instructions and a fictional-data checklist are provided below.
-
-### D. Local URL Structure Inspection (Phase 4A)
-- **Offline Structural Parsing Engine**:
-  - `POST /api/v1/inspect/url` inspects URL structure without connecting to the remote server or fetching content.
-  - **Zero Outbound Network Guarantee**: The inspection pipeline makes **strictly zero network connections**. No DNS resolution (`socket.getaddrinfo`), no socket connections, no HTTP requests, no WHOIS queries, and no AI calls.
-- **Separation of Available vs. Planned Capabilities**:
-  - **Available**: Local URL structure inspection (decomposing scheme, destination host, port, userinfo, IP addresses, punycode, and PSL registrable domain).
-  - **Planned**: External reputation checks (Google Safe Browsing, VirusTotal, WHOIS domain age).
-  - *Core Principle*: Structural inspection alone **never** proves a URL is safe or malicious. Clean structure does not guarantee legitimacy; non-default ports or IP addresses are not inherently fraudulent. Neither establishes sender identity.
-- **Parsing Libraries & PSL Derivation**:
-  - Python standard library `urllib.parse.urlsplit` (never a single regular expression).
-  - Python `ipaddress` for IPv4/IPv6 classification, bracketed IPv6 support (`[::1]`), and scope categorization (`private`, `loopback`, `link_local`, `reserved`, `public`).
-  - `idna` (version 3.20) for IDNA 2008 Unicode and ASCII punycode validation and conversion.
-  - `tldextract` (version 5.4.0) with bundled offline Public Suffix List snapshot:
-    - Runtime downloads strictly disabled (`suffix_list_urls=()`, `cache_dir=None`).
-    - Configured with RFC 2606 / RFC 6761 reserved testing TLDs (`invalid`, `test`, `example`, `localhost`).
-    - Derives registrable domains reliably without arbitrary two-label approximations (e.g. handles `example.co.uk`, `service.gov.in`, `com.au`).
-- **Deterministic Structural Observations**:
-  - `unencrypted_http`: Informational. Unencrypted transit; notes that HTTP alone does not prove fraud.
-  - `userinfo_present`: Caution. Credentials before `@` in netloc do not represent the destination domain; highlights actual destination host.
-  - `ip_literal_host`: Caution. Destination is a direct IP address. Scope noted (private, loopback, public). Notes an IP address is not inherently malicious.
-  - `special_use_address`: Informational. Explains special-use/private/loopback scope without asserting network reachability.
-  - `punycode_hostname`: Informational. Displays both Unicode and ASCII punycode (`xn--...`). Explains IDN legitimacy alongside lookalike caveat.
-  - `non_default_port`: Informational. Identifies port without labeling it malicious.
-  - `deep_subdomain_hierarchy`: Caution. Threshold >= 3 subdomain levels. Explains deep subdomain risk objectively.
-- **Security & Privacy Boundaries**:
-  - Maximum URL length: 2,048 characters (`MAX_URL_LENGTH = 2048`).
-  - Pre-parse control character check: rejects strings with ASCII control characters (< 32 or 127) or embedded spaces.
-  - Explicit scheme requirement: strictly requires `http://` or `https://`. Schemes are never silently guessed or repaired.
-  - `Cache-Control: no-store` on all success (200) and validation failure (422) responses.
-  - Zero URL logging or persistence: submitted URLs are never logged or saved on the server.
-- **Frontend Presentation**:
-  - Accessible `UrlInspector` component in `frontend/src/features/url/UrlInspector.tsx`.
-  - Destination hostname is prominently styled in a highlighted card so users immediately see where the link actually points.
-  - Submitted URL is displayed strictly as **plain text** with word break (`break-all`), **NEVER as an `<a>` tag or clickable HTML link**.
-  - Edit invalidation marks previous findings as stale; `AbortController` discards pending requests on edit, reset, or re-inspection.
+When users encounter high-pressure job offers, unexpected delivery fee requests, account suspension notices, or unfamiliar URLs, FraudLens provides:
+- **Evidence-Grounded Warning Signs**: Identified psychological coercion tactics, urgency triggers, and advance-fee patterns grounded strictly in verbatim quotes from submitted text.
+- **Offline URL Structural Inspection**: Instant breakdown of destination hostnames, registrable domains (eTLD+1), credentials before `@`, and deceptive subdomains—executed on the local FraudLens backend without calling external providers or resolving remote DNS.
+- **Optional Google Safe Browsing Reputation**: On-demand query of Google Safe Browsing threat feeds, requiring explicit user consent, pre-flight destination sanitization, and strict fail-closed safety handling.
+- **Case Builder & Evidence Aggregation**: An in-memory investigation workspace where users can collect findings from text analysis, OCR/PDF extractions, and URL inspections into a unified case.
+- **Evidence-Linked Case Summary**: A deterministic synthesis panel highlighting warning signs, genuine conflicts, unknown factors, and practical offline verification steps.
+- **Plain-Text Case Report Export**: One-click download of a UTF-8 plain-text investigation report (`.txt`) generated directly in the browser.
+- **Opt-In Local Device Storage**: In-memory privacy by default with an optional, explicit "Save on This Device" workflow backed by browser `localStorage` and schema validation.
+- **Human-in-the-Loop Document & Screenshot Extraction**: Local OCR and PDF parsing engines that allow users to inspect, correct, and confirm extracted text before analysis.
 
 ---
 
-## 3. Selected AI Model & Documentation Sources
+## 2. Capabilities & Architecture: Operational Boundaries
 
-- **Provider**: Google Gemini API (`AI_PROVIDER=gemini`)
-- **SDK**: Official `google-genai` Python SDK (`google-genai>=2.0.0,<3.0.0`, installed `2.33.0`)
-- **Selected Model ID**: `gemini-3.5-flash-lite`
-  - *Models Documentation*: https://ai.google.dev/gemini-api/docs/models
-  - *Structured Outputs Documentation*: https://ai.google.dev/gemini-api/docs/structured-output
-  - *Dynamic Rate Limits Console*: https://aistudio.google.com/rate-limit
-  - *Terms of Service*: https://ai.google.dev/gemini-api/terms
-- **Historical Candidate & Investigation (`gemini-3.8-flash`)**:
-  - Phase 2A was initially prepared against `gemini-3.8-flash`.
-  - Live smoke testing with `gemini-3.8-flash` returned HTTP 504 `DEADLINE_EXCEEDED` (~30s) and HTTP 503 `UNAVAILABLE` (6.29s) under `generate_content`, and client timeouts (~61s) under `interactions.create`.
-  - Standalone transport diagnostics confirmed that exactly 1 transport attempt was made with zero unintended retries.
-  - While AI Studio playground returned Hello, API gateway calls to `gemini-3.8-flash` consistently failed. The root cause remains **unknown / unconfirmed** (potential gateway queue delays, model provisioning latency, or capacity constraints on the free-tier developer endpoint).
-  - Transitioning to **`gemini-3.5-flash-lite`** resolved the issue immediately with successful live responses.
-- **Model Configurability**: Configurable via `AI_MODEL` in `backend/.env`. The application will never silently switch models.
+FraudLens strictly separates browser-only client operations, backend-local processing, and external cloud provider requests:
 
----
-
-## 4. Free Tier & Data Privacy Boundary
-
-- **Dynamic Quotas**: Free tier quotas and rate limits are managed dynamically per project by Google AI Studio. Check your active limits directly in the [Google AI Studio Rate Limit page](https://aistudio.google.com/rate-limit).
-- **Fictional Data Only**: On the Google AI Studio Free Tier, prompts and outputs may be processed by Google for service improvements and reviewed by human annotators. **Never submit real, sensitive personal evidence on the free tier.**
-- **Storage Setting (`store=False`)**: The adapter sets `store=False` in `GenerateContentConfig` to opt out of developer-owned interaction logging in Google AI Studio project history where supported.
-- **No Zero Retention Guarantee**: Setting `store=False` does **not** provide zero data retention (ZDR) and does not override Google's safety/abuse monitoring or free-tier service terms. Strict Zero Data Retention is an enterprise compliance feature available on Google Cloud Vertex AI, not the standard Gemini Developer API.
+| Category | Capability | Execution Location | External Service Used | Execution & Network Scope |
+|---|---|---|---|---|
+| **External Cloud Services** | **Suspicious Message Analysis** | Backend (`FastAPI`) | **Google Gemini API** (`gemini-3.5-flash-lite`) | Transmits message text only within `<UNTRUSTED_MESSAGE>` prompt isolation delimiters. External search tools are disabled (`tools=None`), and interaction logging is disabled (`store=False`). |
+| **External Cloud Services** | **URL Threat Reputation Check** | Backend (`FastAPI`) | **Google Safe Browsing** (`v4` Lookup API) | **Opt-in only**. Requires explicit user consent via an unchecked checkbox. Strips URL fragments (`#...`) before transmission and blocks private, loopback, and special-use domains. Never connects to the target website. |
+| **Backend-Local Processing** | **URL Structure Inspection** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses Python standard library and a bundled offline Public Suffix List snapshot (`tldextract`). Zero remote DNS queries, zero socket connections, and zero HTTP requests. |
+| **Backend-Local Processing** | **Screenshot Text Extraction** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses local Tesseract OCR and Pillow on the server. Images are never transmitted over the internet. Bounded by 5 MiB file size and 12 MP limits. |
+| **Backend-Local Processing** | **PDF Document Extraction** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses `pypdf` inside an isolated worker subprocess with a 256 MiB Windows Job Object memory ceiling and a 20-second kill/reap timeout. Max 10 pages and 10,000 characters. |
+| **Browser-Only Operations** | **Case Builder Workspace** | Frontend (`React`) | **None** | **Browser-only operation (zero server network transmission)**. Evidence items are aggregated in client React state. Refreshing the browser clears in-memory state. No external analytics, telemetry, or server persistence. |
+| **Browser-Only Operations** | **Evidence-Linked Case Summary** | Frontend (`React`) | **None** | **Browser-only operation (zero server network transmission)**. Deterministic client-side rules synthesize warning signs, evaluate conflicts against strict criteria, compile unknowns, and suggest practical verification steps without API calls. |
+| **Browser-Only Operations** | **Plain-Text Report Download** | Frontend (`React`) | **None** | **Browser-only operation (zero server network transmission)**. Compiles a clean UTF-8 `.txt` report directly in the browser via `Blob`. Triggers a local file download without sending data to any backend or cloud service. |
+| **Browser-Only Operations** | **Local Case Persistence** | Frontend (`React`) | **None** | **Browser-only operation (zero server network transmission)**. Opt-in browser `localStorage` preserves one case across browser restarts only when explicitly requested. Validates schema before loading and recalculates reputation freshness upon reopening. |
 
 ---
 
-## 5. Local Setup & Secret Entry Instructions (Windows PowerShell)
+## 3. End-to-End Demo Walkthrough (Fictional Suspicious Message)
 
-> **Important**: Never paste your API key into chat or shell command lines. Keep it strictly in your local `backend/.env` file.
+This guided walkthrough demonstrates how a portfolio reviewer or investigator can use FraudLens to analyze an unsolicited, urgent SMS from initial intake to plain-text case report generation.
 
-### Step 1: Environment Configuration
+> **Important**: All data used in this walkthrough is purely synthetic and fictional. Never submit live financial credentials, active passwords, or sensitive personal data.
 
-Create `backend\.env` from `backend\.env.example` only if it does not already exist:
+### Fictional Scenario
+The user receives an unexpected SMS claiming a package is delayed due to an unpaid delivery redirection fee:
+> *"URGENT: Package #US-88219 is on hold due to an unpaid $2.50 address redirection fee. Avoid return to sender by verifying your address and paying now: https://delivery-tracking.example.invalid/pay"*
 
+---
+
+### Step 1: Suspicious Message Risk Analysis (Calls Gemini API)
+1. In the **Analyze Suspicious Message** section, paste the fictional text into the message textarea.
+2. Select explanation language: **English** (or **हिन्दी**).
+3. Click **Analyze Message**.
+4. **Outcome**:
+   - High-visibility **Warning Signs Detected** badge.
+   - Identified categories: Urgency / High Pressure, Advance Fee Request, Credential / Payment Redirection.
+   - **Verbatim Evidence Quotes**: Quotes `"$2.50 address redirection fee"` and `"verifying your address and paying now"`.
+   - **Plain-Text URLs**: The destination URL is strictly rendered as monospace plain text, **never as a clickable HTML link**.
+   - **Prominent Disclaimers**: Analysis explicitly states that findings evaluate submitted text only and do not verify sender identity or guarantee legitimacy.
+5. Click **Add to Case** (or proceed to create a case first).
+
+---
+
+### Step 2: Case Creation & Collecting Evidence (Browser-Only / In-Memory)
+1. Scroll down to the **Case Builder** section.
+2. Enter the case name: `Fictional Delivery Fee Phishing SMS` and click **Create Case**.
+3. The in-memory case is initialized with an empty state banner: *"No evidence items in this case yet. Inspect a URL or analyze a message to add findings."*
+4. Return to the message analysis result and click **Add to Case**.
+5. The analysis is added as **Evidence #1: [Message Analysis]**. The card displays the assessment, category, submitted text, verbatim warning signs, and timestamp.
+
+---
+
+### Step 3: Local URL Structure Inspection (Backend-Local Processing — No External Providers)
+1. Locate the link from the message: `https://delivery-tracking.example.invalid/pay`.
+2. In the **URL Structure Inspection** section, paste the URL into the input field.
+3. Click **Inspect URL Structure**. (The request is processed on the local FraudLens backend without calling external providers or resolving remote DNS).
+4. **Actual Output**:
+   - **Destination Host**: Prominently isolated in a highlighted card as `delivery-tracking.example.invalid`.
+   - **Registrable Domain (eTLD+1)**: Evaluated as `example.invalid` using the bundled offline Public Suffix List snapshot, which includes RFC 2606 reserved `.invalid` suffixes.
+   - **Subdomains**: `delivery-tracking`.
+   - **Scheme & Port**: `HTTPS` • Port: 443 (default), accompanied by the calibrated notice: *"HTTPS scheme — connection not checked"*.
+   - **Structural Observations**: No structural anomalies detected (with the reminder that standard syntax alone does not prove the link is safe, authentic, or legitimate).
+   - Submitted URL is displayed strictly as selectable plain text.
+5. Click **Add to Case**.
+6. The finding is saved as **Evidence #2: [URL Structure]**.
+
+---
+
+### Step 4: Optional Safe Browsing Demo (Calls Google Safe Browsing v4)
+1. **Destination Boundary Notice**: If one were to submit `https://delivery-tracking.example.invalid/pay` for reputation checking, FraudLens's pre-flight host validation immediately rejects it with HTTP 422 `FORBIDDEN_DESTINATION` (`special_use_domain`). Local and reserved testing domains (such as `.invalid`, `.test`, `.example`, and private IPs) are never transmitted to external providers.
+2. **Demonstrating Reputation with a Public Domain**: To demonstrate external threat reputation checking, enter the public domain **`https://example.com/`** separately in the URL input field.
+3. Scroll to the **External Reputation (Google Safe Browsing)** panel.
+4. Review the pre-flight URL preview: `https://example.com/` (confirming that any fragment `#...` would be stripped prior to transmission).
+5. Check the explicit opt-in consent box:
+   `[x] I consent to transmitting this destination URL to Google Safe Browsing to check for known threat matches.`
+6. Click **Check Reputation (Safe Browsing)**.
+7. **Outcome**:
+   - Result: **No Known Threat Matches** (or threat categories if testing a known test vector).
+   - Provider: Google Safe Browsing.
+   - Mandatory Attribution: *"Data provided by Google Safe Browsing."*
+   - Conspicuous Advisory: *"No known threat match does not guarantee that a link is safe or legitimate. New phishing and malware campaigns may not yet be indexed."*
+   - Active freshness countdown (up to 30 minutes).
+   - **Crucial Scope Clarification**: This reputation check evaluates and applies **strictly to `https://example.com/`**. It does **not** evaluate, vouch for, or guarantee safety for the fictional message link (`https://delivery-tracking.example.invalid/pay`).
+8. Click **Add to Case**.
+9. The result is added as **Evidence #3: [Safe Browsing Reputation]**.
+
+---
+
+### Step 5: Reviewing the Evidence-Linked Case Summary (Browser-Only Operation)
+The **Case Summary** panel automatically synthesizes the saved evidence items in real time directly within the browser:
+- **Warning Signs**:
+  - Highlights the financial urgency and advance fee demand from the message text, linked directly to **Evidence #1** via clickable anchor links.
+- **Conflicting Findings**:
+  - Displays: *"No direct conflicts identified in the saved evidence."*
+  - Clarifies: The "No Known Threat Matches" reputation check for `https://example.com/` (Evidence #3) evaluates that specific domain against known threat feeds only and does not contradict warning signs identified in the suspicious message text (Evidence #1) or structural observations of `https://delivery-tracking.example.invalid/pay` (Evidence #2).
+- **What Remains Unknown**:
+  - Highlights that the sender's phone number and identity remain unverified.
+  - Notes that carrier delivery records cannot be confirmed through message analysis alone.
+  - Notes that the reputation of the fictional link `https://delivery-tracking.example.invalid/pay` is not established by a clean lookup on `example.com`.
+- **Practical Verification Steps**:
+  - Recommends locating package tracking numbers independently through the carrier's official mobile application or verified website.
+  - Advises contacting the delivery company directly using a phone number from an existing invoice or public directory, never via the SMS link.
+
+---
+
+### Step 6: Downloading the Plain-Text Case Report (Browser-Only Operation)
+1. In Case Builder, click the **Download Case Report** button.
+2. FraudLens compiles the active case and triggers a client-side download of `fictional-delivery-fee-phishing-sms-report.txt` generated directly in the browser via `Blob`.
+3. The report file contains:
+   - Header with case name, creation timestamp, and local export timestamp.
+   - Confidentiality and data sensitivity notice.
+   - All four summary sections (Warning Signs, Conflicting Findings, Unknowns, Verification Steps).
+   - Numbered evidence reference section with complete, un-truncated plain-text quotes, inspected URLs, Safe Browsing attribution, and disclaimers.
+
+```text
+================================================================================
+FRAUDLENS CASE INVESTIGATION REPORT
+================================================================================
+Case Name:      Fictional Delivery Fee Phishing SMS
+Case Created:   2026-11-13T19:40:00.000Z
+Exported At:    2026-11-13T19:45:12.345Z
+Evidence Items: 3
+
+CONFIDENTIALITY & SENSITIVITY NOTICE:
+This report was generated locally in the browser from your active investigation
+case. It contains saved evidence items in plain text, which may include sensitive
+personal, credential, or financial details. Handle and store this file securely.
+================================================================================
+
+--------------------------------------------------------------------------------
+1. WARNING SIGNS
+--------------------------------------------------------------------------------
+[Warning Sign 1] Advance Fee Demand
+  Evidence Reference:   Evidence #1: Message Analysis (Warning Signs Detected)
+  Detail:               Message demands an upfront fee ($2.50) to release a package.
+  Evidence Quote (Plain Text): "unpaid $2.50 address redirection fee"
+
+--------------------------------------------------------------------------------
+2. CONFLICTING FINDINGS
+--------------------------------------------------------------------------------
+No direct conflicts identified in the saved evidence.
+(Note: A 'No Known Threat Matches' reputation lookup evaluates threat feed inclusion only
+and does not contradict warning signs in message text or structural URL inspection.)
+
+--------------------------------------------------------------------------------
+3. WHAT REMAINS UNKNOWN
+--------------------------------------------------------------------------------
+[Unknown 1] Sender Identity Unverified
+  Description:          Analysis evaluates message text only and cannot confirm the sender's true identity.
+
+--------------------------------------------------------------------------------
+4. PRACTICAL VERIFICATION STEPS
+--------------------------------------------------------------------------------
+1. Do not submit payment or address details via unsolicited text message links.
+2. Check your tracking number directly on the carrier's official website or app.
+3. Call the carrier using a verified phone number from an official invoice.
+
+--------------------------------------------------------------------------------
+5. NUMBERED EVIDENCE REFERENCES
+--------------------------------------------------------------------------------
+Evidence #1: [Suspicious Message Analysis] Message Analysis (Warning Signs Detected)
+  Evidence ID:          ev-msg-1
+  Added At:             2026-11-13T19:41:00.000Z
+  Source Type:          text_analysis
+  Assessment:           warning_signs_found
+  Category:             Financial / Phishing
+  Summary:              Message contains urgency triggers and advance fee requests.
+  Submitted Message Text (Plain Text):
+  --- BEGIN SUBMITTED MESSAGE TEXT ---
+  URGENT: Package #US-88219 is on hold due to an unpaid $2.50 address redirection fee. Avoid return to sender by verifying your address and paying now: https://delivery-tracking.example.invalid/pay
+  --- END SUBMITTED MESSAGE TEXT ---
+
+Evidence #2: [URL Structure Inspection] URL Structure: delivery-tracking.example.invalid
+  Evidence ID:          ev-url-2
+  Added At:             2026-11-13T19:42:30.000Z
+  Source Type:          url_structure
+  Submitted URL (Plain Text): https://delivery-tracking.example.invalid/pay
+  Hostname:             delivery-tracking.example.invalid
+  Scheme:               https
+  Path:                 /pay
+  Summary:              Destination host: delivery-tracking.example.invalid
+  Inspection Basis:     URL structure only (evaluated on FraudLens backend without calling external providers)
+
+Evidence #3: [URL Threat Reputation (Google Safe Browsing)] Safe Browsing: No Known Threat Matches
+  Evidence ID:          ev-rep-3
+  Added At:             2026-11-13T19:44:00.000Z
+  Source Type:          url_reputation
+  Checked URL (Plain Text): https://example.com/
+  Reputation Outcome:   NO KNOWN MATCH
+  Provider:             Google Safe Browsing
+  Attribution:          Data provided by Google Safe Browsing.
+  Advisory / Disclaimer: A 'No Known Threat Matches' lookup evaluates threat feed inclusion only and does not guarantee that the destination is safe, benign, or authentic. (Result applies strictly to https://example.com/).
+================================================================================
+END OF REPORT - FRAUDLENS
+================================================================================
+```
+
+---
+
+### Step 7: Opt-In Local Case Saving & Reopening (Browser-Only Operation / Storage)
+1. **In-Memory Default**: By default, cases exist only in browser memory. A prominent badge reminds the user: *"In-Memory Storage Only: Cases exist in browser memory only and are cleared on refresh unless saved on this device."*
+2. **Opt-in Save**:
+   - Click **Save on This Device**.
+   - An explicit confirmation dialog appears with a sensitivity disclosure:
+     > *"This case and its evidence may contain sensitive personal or financial information. Saving will store it in this browser profile (localStorage) on this device, where it will remain accessible after refreshing the page."*
+   - Click **Confirm & Save on This Device**.
+   - A success banner confirms: *"Case saved on this device. It will remain in this browser profile."*
+3. **Reopening After Refresh**:
+   - Refresh the browser page (`F5` or `Ctrl + R`).
+   - The active in-memory case is cleared, but a **Reopen Saved Case** banner appears showing the saved case name, creation time, and evidence count.
+   - Click **Reopen Saved Case**.
+   - The case is restored in memory, and reputation evidence freshness is immediately recalculated against the current time.
+4. **Independent Deletion**:
+   - Clicking **Delete Saved Case** removes the stored copy from `localStorage` while keeping the active in-memory case open for further review.
+
+---
+
+## 4. Key Engineering Features & Defenses
+
+### A. Defensive Prompt & AI Pipeline Isolation
+- **Payload Isolation**: Untrusted user text is strictly bounded within `<UNTRUSTED_MESSAGE>` payload delimiters.
+- **System Instruction**: Delivered via Google GenAI `GenerateContentConfig(system_instruction=...)`, instructing the model to treat the text as passive evidence and ignore embedded commands.
+- **Strict Verbatim Grounding**: Every cited `evidence_quote` is validated on the backend to be an exact verbatim substring of the submitted text (`quote in submitted_text`). Fabricated or hallucinated quotes result in immediate rejection (`INVALID_RESPONSE`).
+- **Plain-Text URLs Everywhere**: URLs found in messages, extracted text, or inspections are strictly rendered in monospace plain-text blocks with `break-all`, never as clickable `<a>` links.
+- **Cross-Field Invariants**: `warning_signs_found` requires $\ge 1$ warning sign; `no_clear_warning_signs` strictly enforces zero warning signs.
+- **Language Alignment**: The output `language` tag must match the requested language (`en` or `hi`).
+
+### B. Local Screenshot Text Extraction (Tesseract OCR)
+- **Local Backend Processing (No External Providers)**: Screenshots are processed locally on the FraudLens backend using Tesseract OCR and Pillow (`PIL`). Images are **never sent to Google Gemini or external services**.
+- **MIME & Decompression Bomb Protection**: Accepts strictly PNG and JPEG, verified via file headers. Caps decoded image size at 12 megapixels (`12,000,000` pixels) and file size at 5 MiB. Multi-frame GIFs, animated PNGs, and TIFFs are rejected.
+- **Subprocess Isolation**: 20-second execution timeout with process kill (`proc.kill()`) and child process reaping (`await proc.wait()`). Concurrency bounded by `asyncio.Semaphore(3)`.
+- **Human-in-the-Loop Confirmation**: Extracted text is presented in an editable review area with character counters. The user must review and check a confirmation box before text can be transferred to analysis. Any edit to the text immediately unchecks the box.
+
+### C. Local PDF Document Extraction (`pypdf`)
+- **Local Backend Processing (No External Providers)**: PDF parsing executes on the FraudLens backend in an independent worker subprocess (`app.services.pdf_worker`) managed by `_SyncDocumentRunner`.
+- **Enforceable Memory Ceiling**: Enforces a 256 MiB virtual memory ceiling per worker process using Windows Job Objects before parsing untrusted PDF structures.
+- **Resource Limits**: Strict 10-page limit (`MAX_DOCUMENT_PAGES = 10`), 10,000-character extraction cap, and 20-second timeout with process kill and reaping.
+- **Security Protections**: Pure-Python reader does not execute PDF JavaScript, does not open embedded file attachments, does not follow external URIs, and does not render visual raster graphics.
+
+### D. Backend-Local URL Structure Inspection (No External Providers)
+- **Local Backend Processing**: URL structural inspection executes on the FraudLens backend without calling external providers, resolving remote DNS, opening sockets, or sending HTTP/WHOIS requests.
+- **Public Suffix List Derivation**: Uses `tldextract` with a bundled offline snapshot of the Public Suffix List (runtime network downloads strictly disabled via `suffix_list_urls=()`). Reliably derives multi-part registrable domains (e.g. `example.co.uk`, `portal.gov.in`) and recognizes RFC 2606 reserved suffixes (`.invalid`, `.test`, `.example`).
+- **Structural Observations**: Flags credentials before `@` in netloc (`userinfo_present`), direct IP address destinations (`ip_literal_host`), deep subdomain hierarchies ($\ge 3$ levels), unencrypted HTTP, and non-default ports.
+
+### E. Optional Google Safe Browsing URL Reputation (v4 Lookup)
+- **Explicit Opt-In**: Requires an explicit user consent checkbox before any URL is transmitted.
+- **Sanitization & SSRF Defense**: URL fragments (`#...`) are stripped before transmission. Private, loopback, link-local, and reserved/special-use domains (such as `.invalid`) are rejected with HTTP 422 `FORBIDDEN_DESTINATION`.
+- **Verified Local Setup**: Uses Google Safe Browsing `v4` Lookup JSON protocol (`POST /v4/threatMatches:find`).
+- **Fail-Closed Handling**: Binary Protobuf responses (e.g., from v5) safely fail closed with HTTP 200 `status="unavailable"` and `error_code="MALFORMED_PROVIDER_RESPONSE"`.
+- **Freshness Bounds**: Empty no-match responses return `expires_at=null` (no invented default cache) and stay out of backend cache. Threat matches use provider-indicated `cacheDuration`. Maximum warning freshness is capped at 30 minutes.
+
+### F. Case Builder & Evidence Synthesis
+- **Evidence Management**: Aggregates 4 distinct evidence types (`text_analysis`, `extracted_text`, `url_structure`, `url_reputation`), preserving source timestamps, raw payloads, and plain-text URLs.
+- **Strict Conflict Rules**: A conflict is only flagged when two findings make incompatible claims about the exact same subject under comparable conditions. Differing assessments of different messages are not conflicts. A Safe Browsing no-match and threat match for the same URL do not conflict if performed at different times; they are classified as temporal observations.
+- **Unknowns & Verification Steps**: Rule-based deduction extracts missing context (e.g., missing identity checks, expired reputation findings) and provides actionable, offline verification steps.
+
+### G. Opt-In Local Case Storage & Report Export
+- **In-Memory by Default**: New cases exist only in React state and are cleared on page refresh.
+- **Storage Sensitivity Warning**: "Save on This Device" displays a prominent disclosure before writing to `localStorage`.
+- **Schema Validation**: `validateSavedCase()` validates all fields and evidence payloads against strict type checks, rejecting corrupted or tampered storage data.
+- **Freshness Recalculation**: On reopening a saved case, `recalculateCaseFreshness()` re-evaluates reputation freshness against the current system clock.
+- **Plain-Text Export**: `downloadCaseReport()` generates a UTF-8 `.txt` report locally via `Blob` without network requests.
+
+---
+
+## 5. Technology Stack & Dependencies
+
+### Backend
+- **Python**: 3.12+
+- **Framework**: FastAPI 0.115+, Uvicorn 0.34+ (ASGI Server)
+- **Validation**: Pydantic v2
+- **AI SDK**: `google-genai` (version 2.33.0)
+- **PDF Extraction**: `pypdf` (version 5.9.0)
+- **Domain Parsing**: `tldextract` (version 5.4.0, bundled offline snapshot), `idna` (version 3.20)
+- **OCR Engine**: Tesseract OCR (UB-Mannheim v5.x) + `Pillow` (PIL)
+- **Testing**: `pytest`, `pytest-asyncio`, `httpx`
+
+### Frontend
+- **Framework**: React 18
+- **Language**: TypeScript (strict mode enabled)
+- **Styling**: TailwindCSS
+- **Build Tool**: Vite 6
+- **Testing**: Vitest, React Testing Library, jsdom
+- **Code Quality**: ESLint v9 (React Hooks, TypeScript rules)
+
+---
+
+## 6. Local Setup & Configuration (Windows PowerShell)
+
+> **Important**: Never paste API keys into terminal command lines or version-controlled files. Keep credentials strictly in `backend/.env`.
+
+### Step 1: Configure Environment Variables
+From the repository root in PowerShell:
 ```powershell
 if (-not (Test-Path backend\.env)) {
     Copy-Item backend\.env.example backend\.env
 }
-```
-
-### Step 2: Open and Edit in Notepad
-
-Open the backend `.env` file in Notepad:
-
-```powershell
 notepad.exe backend\.env
 ```
 
-Inside Notepad, set these values:
-- `AI_PROVIDER=gemini`
-- `AI_MODEL=gemini-3.5-flash-lite`
-- `AI_API_KEY=YOUR_ACTUAL_GEMINI_KEY_HERE`
-
-Preserve the existing `ALLOWED_ORIGINS` setting:
+Set the following configuration values:
 ```env
 ENVIRONMENT=development
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+# AI Analysis Configuration
 AI_PROVIDER=gemini
 AI_MODEL=gemini-3.5-flash-lite
-AI_API_KEY=YOUR_ACTUAL_GEMINI_KEY_HERE
+AI_API_KEY=YOUR_ACTUAL_GEMINI_API_KEY_HERE
+
+# URL Reputation Configuration (Verified Local Setup: v4)
+SAFE_BROWSING_VERSION=v4
+SAFE_BROWSING_API_KEY=YOUR_ACTUAL_SAFE_BROWSING_API_KEY_HERE
 ```
+Save (`Ctrl + S`) and close Notepad.
 
-Save the file (`Ctrl + S`) and close Notepad.
-
-*(Git is verified to ignore `backend/.env`; it will not be committed or tracked).*
+*(Note: `backend/.env` is tracked in `.gitignore` and is never committed).*
 
 ---
 
-### Step 3: (Optional) Install Tesseract-OCR for Screenshot Text Extraction (Phase 3A)
-
-Screenshot text extraction executes locally on the backend using Tesseract OCR.
-If Tesseract is not installed, FraudLens continues to work normally for direct text pasting, and truthfully reports `screenshot_extraction: false` in `GET /api/v1/capabilities`.
-
-To enable screenshot text extraction on Windows:
-1. Download the official installer from UB-Mannheim:
-   https://github.com/UB-Mannheim/tesseract/wiki
+### Step 2: (Optional) Install Tesseract-OCR for Screenshot Extraction
+If you wish to test local screenshot OCR:
+1. Download the Windows installer from UB-Mannheim: https://github.com/UB-Mannheim/tesseract/wiki
 2. Run the installer (e.g. `tesseract-ocr-w64-setup-5.5.0.exe`).
-3. Under **Components to install**, expand **Additional language data (download)** and check **Hindi**.
-4. Complete installation to the default path: `C:\Program Files\Tesseract-OCR\tesseract.exe`.
-5. *(Optional)* If installed to a non-standard directory, add this line in `backend/.env`:
-   ```env
-   TESSERACT_CMD=D:\CustomPath\Tesseract-OCR\tesseract.exe
-   ```
-6. Verify in PowerShell:
+3. Under **Components to install**, expand **Additional language data** and select **Hindi**.
+4. Complete installation to `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+5. Verify in PowerShell:
    ```powershell
    & "C:\Program Files\Tesseract-OCR\tesseract.exe" --version
-   & "C:\Program Files\Tesseract-OCR\tesseract.exe" --list-langs
    ```
+*(If Tesseract is not installed, FraudLens continues to work normally for text analysis and URL inspection, truthfully reporting `screenshot_extraction: false` in capabilities).*
 
 ---
 
-### Step 4: Run the Synthetic Smoke Test (CLI)
-
-Before starting the web server, run the synthetic smoke test from the `backend` directory to verify your key and model connectivity:
-
+### Step 3: Run the Synthetic Smoke Test (CLI)
+Verify your Gemini API key and live model connectivity out-of-band using the safe synthetic test:
 ```powershell
 Set-Location D:\FraudLens\backend
 .\.venv\Scripts\python.exe -m scripts.check_gemini
 ```
 
-Verified live output:
+Expected output:
 ```text
 ==================================================
 FraudLens — Synthetic Gemini Connectivity Verification
@@ -262,269 +376,114 @@ Provider: gemini
 Model ID: gemini-3.5-flash-lite
 --------------------------------------------------
 Result: SUCCESS
-Elapsed Time: 1.80s
+Elapsed Time: ~1.8s
 Schema Validation: PASSED (Devanagari Script: Yes)
-Harmless Synthetic Output:
-  English: Hello! How can I help you today?
-  Hindi:   नमस्ते! मैं आज आपकी क्या मदद कर सकता हूँ?
---------------------------------------------------
-Note: Hindi script detection confirms format presence, not translation quality.
 Connectivity check complete. No user evidence was submitted or retained.
 ```
-
-- **Live Plain-Text Diagnostic**: Also verified via `.\.venv\Scripts\python.exe -m scripts.diagnose_raw_gemini` (`SUCCESS`, 3.65s elapsed).
-- **Separation of Concerns**: CLI verification (`check_gemini.py`) validates the Gemini API key, adapter configuration, and structured output parsing out-of-band. The running backend endpoint `GET /api/v1/capabilities` intentionally continues to report `ai_connection="not_tested"` at server runtime; it does not claim a live connection until live text analysis is executed.
-- **Text Analysis Status**: Text analysis is active in Phase 2B (`POST /api/v1/analyze/text`), supported by strict evidence grounding, defensive prompt isolation, and 8 safe diagnostic reason codes.
+*(Note: `scripts.check_gemini` verifies live Gemini connectivity and API credentials out-of-band using harmless synthetic prompts. It does not submit user evidence).*
 
 ---
 
-### Step 4: Backend Startup
+### Step 4: Start the Applications Locally
 
-In a **dedicated PowerShell terminal**:
-
-```powershell
-Set-Location D:\FraudLens\backend
-..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
----
-
-### Step 5: Frontend Startup
-
-In a **second PowerShell terminal**:
-
-```powershell
-Set-Location D:\FraudLens\frontend
-node .\node_modules\vite\bin\vite.js --host 127.0.0.1 --port 5173 --strictPort
-```
-
-Open `http://127.0.0.1:5173` in your browser.
-
----
-
-## 6. Running Verification Commands
-
-### Backend Verification (pytest)
-In a PowerShell terminal from the project root:
-```powershell
-.\backend\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests -v
-```
-
-**Result**: 167 passed tests covering:
-- Health response contract (`GET /api/v1/health`).
-- Capabilities reporting (`GET /api/v1/capabilities`) for text analysis, OCR, and document extraction.
-- Secret masking (`ai_api_key` never exposed).
-- Strict validation (blank text, character limit, language restrictions, extra field rejection).
-- Validation error sanitization (markers never echoed).
-- Text analysis routing, exact evidence substring validation, and cross-field invariants.
-- 8 safe output diagnostic reason codes and provider request rejection handling.
-- Gemini adapter missing key / placeholder rejection.
-- Real SDK configuration object verification (`HttpOptions`, `GenerateContentConfig`, `store=False`, `attempts=1`, `aclose()`).
-- OCR image validation (PNG, JPEG, extension/MIME spoofing, max 5 MiB file size, max 12 MP decoded limits, multi-frame/animated rejection, decompression-bomb defense).
-- OCR dual event loop compatibility (Windows `_WindowsSelectorEventLoop` under Uvicorn `--reload` and `ProactorEventLoop`), worker thread fallback, process kill and reaping on timeout, and temporary file unlinking.
-- Real local OCR endpoint execution (`POST /api/v1/extract/screenshot`) and outbound network isolation (zero Gemini calls during OCR).
-- PDF document extraction (`POST /api/v1/extract/document`) with `pypdf`, worker process isolation, timeout termination, child process reaping, event loop responsiveness, and repeated cancellation shielding.
-- Single-page, multipage, and Hindi Unicode text extraction, empty doc rejection, incomplete page warnings, 10-page limit, and 10,000-character limit.
-- Pre-spool bounded multipart upload rejection (5 MiB + 64 KiB overhead), streaming oversize abort, and Starlette `SpooledTemporaryFile` cleanup.
-- Outbound network isolation (zero Gemini calls during document extraction).
-
-### Frontend Verification (Vitest, Lint, TypeScript, Build)
-In a PowerShell terminal inside `frontend`:
-```powershell
-Set-Location frontend
-
-# 1. Run unit tests with Vitest & React Testing Library
-npm test
-
-# 2. Run TypeScript strict type-checking
-npx tsc -b
-
-# 3. Run ESLint code quality checks
-npm run lint
-
-# 4. Run production bundle build
-npm run build
-```
-
-**Results (Phase 3B Final)**:
-- **Backend Tests (pytest)**: 167 tests passed in 20.65s.
-- **Frontend Tests (Vitest)**: 49 tests passed in 19.70s.
-- **TypeScript (tsc -b)**: 0 errors.
-- **ESLint**: 0 errors, 0 warnings.
-- **Vite build**: production bundle created successfully in `dist/` (195.56 kB JS, 23.55 kB CSS).
-
----
-
-## 7. Application Startup Instructions (Windows PowerShell)
-
-To start both services locally:
-
-### Terminal 1: Start Backend (FastAPI)
+#### Terminal 1: Backend Server (FastAPI)
 ```powershell
 Set-Location D:\FraudLens\backend
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-### Terminal 2: Start Frontend (Vite)
+#### Terminal 2: Frontend Server (Vite)
 ```powershell
 Set-Location D:\FraudLens\frontend
-node .\node_modules\vite\bin\vite.js --host 127.0.0.1 --port 5173 --strictPort
+npm run dev
 ```
 
-Once running, navigate to `http://127.0.0.1:5173` in your browser.
+Open your browser to: **`http://127.0.0.1:5173`**
 
 ---
 
-## 8. Manual Testing Checklist (Fictional Data Only)
+## 7. Verification & Offline Test Suite Results
 
-> **Important**: Never submit real, sensitive personal data or active banking information. Use only synthetic or fictional test examples.
+FraudLens includes an extensive offline test suite covering unit, contract, integration, and security boundaries.
 
-### Example 1: Advance-Fee Remote Job Offer
-- **Input Text**:
-  > “Congratulations! You have been selected for a remote Data Entry position paying $45/hour. To secure your onboarding kit and software license, please transfer a refundable registration deposit of $150 to registration@example.invalid immediately.”
-- **Language**: English
-- **Expected Assessment**: `warning_signs_found`
-- **Qualitative Expectations**:
-  - Badge: "Warning Signs Detected"
-  - Category: Job / Employment Offer
-  - Warning Signs: Highlighting the advance fee deposit ($150) and unrealistic pay/selection urgency.
-  - Quoted Evidence: Exact quote from text formatted as plain text (no clickable links).
-  - Practical Verification Steps: Directing the user to check the employer's official careers portal and never pay for a job offer.
+### Automated Test Execution Commands
 
-### Example 2: OTP / Account Suspension Phishing
-- **Input Text**:
-  > “URGENT: Your Apex Bank card is suspended due to unusual activity. Avoid permanent closure by verifying your PIN and OTP immediately at https://apexbank-security-verify.example.invalid/login.”
-- **Language**: English or हिन्दी
-- **Expected Assessment**: `warning_signs_found`
-- **Qualitative Expectations**:
-  - Badge: "Warning Signs Detected"
-  - Category: Phishing / Impersonation
-  - Warning Signs: Highlighting urgency and the request for sensitive credentials/OTP.
-  - Plain-Text URL: The URL `https://apexbank-security-verify.example.invalid/login` must appear as a monospace plain text quote, NOT a clickable link.
-  - Practical Verification Steps: Advise calling the phone number on the back of the physical bank card.
+```powershell
+# 1. Run all backend tests offline (pytest)
+Set-Location D:\FraudLens
+.\backend\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests -v
 
-### Example 3: Routine Meeting Reminder (No Red Flags)
-- **Input Text**:
-  > “Hi team, just a reminder that our weekly project sync is scheduled for tomorrow at 10:00 AM in Conference Room B. Please review the shared slides before the meeting.”
-- **Language**: English
-- **Expected Assessment**: `no_clear_warning_signs`
-- **Qualitative Expectations**:
-  - Badge: "No Clear Warning Signs Found"
-  - Prominent Cautionary Notice:
-    > *“Important: This does not prove the message or sender is legitimate. Scammers frequently use subtle, multi-stage, or tailored communications that appear harmless in isolation.”*
-  - Zero warning signs displayed.
-  - Guidance suggesting standard verification via known channels if unsolicited.
+# 2. Run all frontend unit and integration tests (Vitest)
+Set-Location D:\FraudLens\frontend
+npm test
 
----
+# 3. Strict TypeScript type check
+npx tsc -b
 
-## 9. Manual Screenshot Test Checklist (Phase 3A)
+# 4. ESLint code quality checks
+npm run lint
 
-When Tesseract OCR is installed on the host, use this checklist to verify the screenshot workflow:
+# 5. Production bundle build
+npm run build
+```
 
-1. **PNG Selection & Preview**:
-   - Select a valid PNG screenshot ($\le 5$ MiB).
-   - Verify local preview thumbnail renders with filename and file size.
-   - Verify preview URL is cleaned up if "Remove" is clicked.
-2. **Local Extraction (Zero Google Calls)**:
-   - Select OCR language (`EN (eng)` or `HI (hin)`).
-   - Click "Extract Text".
-   - Confirm extraction finishes locally without network activity to Google.
-3. **Editable Review Area**:
-   - Verify extracted text appears in the editable textarea with character counter.
-   - Verify notice: *"OCR may misread names, amounts, URLs, or characters."*
-   - Verify "Use Reviewed Text for Analysis" is disabled until `[x] I have reviewed and confirmed the extracted text for accuracy` is checked.
-4. **Review Invalidation**:
-   - Check the confirmation box.
-   - Edit any character in the textarea.
-   - Verify the confirmation box automatically unchecks and transfer is disabled.
-5. **Transfer to Analysis**:
-   - Re-check the confirmation box and click "Use Reviewed Text for Analysis".
-   - Verify text is transferred to the main analysis textarea.
-   - Verify the "Screenshot Text Provenance Notice" badge appears.
-   - Click "Analyze Message" to run Gemini analysis on the exact reviewed text.
-6. **Error Handlers**:
-   - Try uploading a `.txt` file or corrupt image: verify `INVALID_IMAGE` error.
-   - Try uploading an image $> 5$ MiB: verify `FILE_TOO_LARGE` error.
+### Verified Test Results
+
+| Test Suite | Scope | Target | Result | Status |
+|---|---|---|---|---|
+| **Backend Suite (`pytest`)** | Unit, contract, security, and router tests | 362 tests across 13 test files | **362 passed, 20 warnings** in ~74s | **PASS** |
+| **Frontend Suite (`vitest`)** | Components, integration, storage, and export tests | 120 tests across 10 test files | **120 passed, 0 failed** in ~52s | **PASS** |
+| **Type Checking (`tsc -b`)** | Strict TypeScript compilation | All components, utilities, and tests | **0 errors** | **PASS** |
+| **Linting (`eslint .`)** | Code style, hooks rules, and type safety | Entire frontend codebase | **0 errors, 0 warnings** | **PASS** |
+| **Production Build (`vite build`)** | Minified production bundle | `dist/` bundle generation | **Built in 1.48s** (252 kB JS, 33 kB CSS) | **PASS** |
+
+### Verified Manual Browser Checks
+1. **Successful v4 No-Match Freshness**: With `SAFE_BROWSING_VERSION=v4`, checking `example.com` in the browser displayed **"No Known Threat Matches"** with the Google Safe Browsing attribution and non-guarantee advisory, **without an immediate expiry banner**.
+2. **Dynamic URL Modification Staleness**: Modifying the inspected URL immediately revoked consent and flagged previous reputation results as **stale**.
+3. **End-to-End Case Workflow**: Created a case, added message analysis, URL structure, and URL reputation evidence items, verified Case Summary synthesis, downloaded the `.txt` report, saved the case locally, refreshed the page, and reopened the saved case with recalculation of freshness.
+
+### Test Environment & Connectivity Disclosure
+- **Offline Automated Tests**: Automated test suites (`pytest` and `vitest`) run entirely offline using recorded fixtures and mock transports. The automated Safe Browsing tests used mocks and fixtures; no live requests to Google Safe Browsing are made during automated test suite runs to avoid external dependencies, rate limits, and data egress.
+- **Out-of-Band Gemini Verification**: Live Gemini API connectivity and API credentials were confirmed out-of-band using the synthetic CLI check (`scripts.check_gemini`).
 
 ---
 
-## 10. Manual URL Inspection Test Checklist (Phase 4A)
+## 8. Security, Privacy & Safety Disclosures
 
-Use this checklist with fictional test URLs to verify the URL structure inspection workflow in the browser:
-
-1. **Ordinary HTTPS URL**:
-   - Input: `https://example.com/login`
-   - Verify prominent destination host card shows `example.com`.
-   - Verify submitted URL is rendered as plain text (not a clickable link).
-   - Verify observations state no anomalies detected.
-2. **Userinfo URL with Brand Impersonation Pattern**:
-   - Input: `https://mybank.com@destination.invalid/account`
-   - Verify destination host card prominently displays `destination.invalid` (NOT `mybank.com`).
-   - Verify caution observation highlights that `mybank.com` is authentication userinfo, not the destination server.
-3. **Misleading Deep Subdomain**:
-   - Input: `https://mybank.com.security.destination.invalid/portal`
-   - Verify destination host displays `mybank.com.security.destination.invalid`.
-   - Verify Registrable Domain displays `destination.invalid`.
-   - Verify Caution observation: Deep Subdomain Hierarchy (3 levels: `mybank`, `com`, `security`).
-4. **Valid Unicode IDN / Punycode**:
-   - Input: `https://münchen.de/portal`
-   - Verify destination host displays `münchen.de`.
-   - Verify ASCII Punycode displays `xn--mnchen-3ya.de`.
-   - Verify Informational observation explains Internationalized Domain Names.
-5. **Direct IP Address & Non-Default Port**:
-   - Input: `http://192.168.1.1:8080/admin`
-   - Verify destination host displays `192.168.1.1` (IPv4, private scope).
-   - Verify Informational observations for unencrypted HTTP, non-default port 8080, and private address scope.
-6. **Input Validation & Stale Detection**:
-   - Enter `ftp://files.example.com` -> verify `UNSUPPORTED_SCHEME` error callout with actionable guidance.
-   - Enter `https://example.com:99999` -> verify `INVALID_PORT` error callout.
-   - Modify the input text after inspection -> verify stale banner: *"Input modified: The URL was changed since the last inspection."*
-   - Click Reset -> verify input and results are cleared.
+1. **Plain-Text URLs**: FraudLens strictly displays user-submitted URLs as plain text monospace strings. They are never rendered as clickable `<a>` links to prevent accidental navigation to malicious targets.
+2. **No Guarantee of Safety**: FraudLens makes clear that "No known threat match" and "No clear warning signs" do **not** guarantee that a message, sender, or destination link is legitimate. New or targeted phishing attacks may not yet be indexed.
+3. **Opt-In External Transmissions**: Network requests to external services (Gemini API and Google Safe Browsing) require explicit user action and consent. The user is warned before external transmission occurs.
+4. **Browser-Only Operations & Backend-Local Processing**: Case Builder, Case Summary, report download, and local case persistence are strictly browser-only operations that make zero requests to any server. Screenshot OCR, PDF document extraction, and URL structural inspection use the local FraudLens backend without calling external providers or resolving remote DNS.
+5. **In-Memory Storage by Default**: Cases exist only in memory unless the user explicitly opts into local device storage (`localStorage`). A clear disclosure is presented before saving.
+6. **Free-Tier Data Boundary**: Prompts submitted via Google AI Studio free tier may be processed according to Google's terms. Never submit real financial credentials or personally identifiable information (PII).
 
 ---
 
-## 11. Troubleshooting
+## 9. Troubleshooting & FAQ
 
-### 1. Missing or Placeholder Key Error
-If the backend returns HTTP 503 `AI_CONFIGURATION_MISSING`:
-- Open `backend\.env` in Notepad and verify `AI_PROVIDER=gemini` and `AI_API_KEY` contains your real key starting with `AIza...`.
+### 1. Backend Returns HTTP 503 `AI_CONFIGURATION_MISSING`
+- Verify that `backend\.env` exists and contains `AI_PROVIDER=gemini` and `AI_API_KEY=AIza...`.
 
-### 2. Authentication Failed (401/403)
-If the backend returns HTTP 503 `AI_AUTH_FAILED`:
-- Check that the key copied from Google AI Studio is active and has no trailing spaces or expired project permissions.
+### 2. URL Reputation Returns HTTP 503 `SAFE_BROWSING_NOT_CONFIGURED`
+- Ensure `SAFE_BROWSING_API_KEY` is populated and `SAFE_BROWSING_VERSION=v4` is set in `backend\.env`.
+- Offline URL structure inspection remains fully operational on the local backend even when Safe Browsing is not configured.
 
-### 3. Model Unavailable (404)
-If the backend returns HTTP 503 `AI_MODEL_UNAVAILABLE`:
-- Verify that `AI_MODEL=gemini-3.5-flash-lite` in `backend/.env`.
+### 3. Screenshot OCR Reports `OCR_UNAVAILABLE`
+- Tesseract OCR is not installed or not in system PATH. Install Tesseract-OCR v5.x or set `TESSERACT_CMD` in `backend\.env`. Direct text pasting and URL inspection continue to function normally.
 
-### 4. Quota Exceeded (429)
-If the backend returns HTTP 429 `AI_QUOTA_EXCEEDED`:
-- The project has reached its free-tier rate limits. Check the [Google AI Studio Rate Limit page](https://aistudio.google.com/rate-limit).
-
-### 5. Local OCR Unavailable (HTTP 503 `OCR_UNAVAILABLE`)
-If screenshot extraction reports that Tesseract is not installed:
-- Install Tesseract-OCR (v5.x) on Windows and ensure `tesseract.exe` is in PATH or specify `TESSERACT_CMD` in `backend/.env`.
-- Text analysis remains fully operational by pasting text directly into the form.
-
-### 6. OCR Language Not Installed (HTTP 503 `OCR_LANGUAGE_NOT_INSTALLED`)
-If Hindi OCR extraction fails:
-- Ensure `hin.traineddata` was selected during installation or placed into Tesseract's `tessdata` folder (`C:\Program Files\Tesseract-OCR\tessdata`).
-
-### 7. File Too Large (HTTP 413 `FILE_TOO_LARGE`)
-If screenshot extraction fails with size limits:
-- Screenshots must be $\le 5$ MiB. Crop the image to focus on the suspicious message area before uploading.
-
-### 8. Occupied Port (8000 or 5173)
-If port 8000 or 5173 is already in use by another service:
-- Check what process is using the port:
+### 4. Port 8000 or 5173 Already in Use
+- Check active port listeners in PowerShell:
   ```powershell
   Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue
   ```
-- If you need to run the backend on port 8001:
+- To start the backend on port 8001:
   ```powershell
-  ..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+  .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
   ```
-- Update `frontend/.env`:
-  ```env
-  VITE_API_BASE_URL=http://127.0.0.1:8001
-  ```
+  Then set `VITE_API_BASE_URL=http://127.0.0.1:8001` in `frontend/.env`.
+
+---
+
+## 10. License
+
+This project is developed for educational and portfolio demonstration purposes. All rights reserved. Google Safe Browsing and Google Gemini are trademarks of Google LLC.

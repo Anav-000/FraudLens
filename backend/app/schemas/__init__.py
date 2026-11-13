@@ -16,6 +16,11 @@ from .url_inspection import (
     UrlObservationLevel,
     MAX_URL_LENGTH,
 )
+from .url_reputation import (
+    UrlReputationRequest,
+    UrlReputationResponse,
+    UrlReputationErrorResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -35,4 +40,7 @@ __all__ = [
     "UrlObservation",
     "UrlObservationLevel",
     "MAX_URL_LENGTH",
+    "UrlReputationRequest",
+    "UrlReputationResponse",
+    "UrlReputationErrorResponse",
 ]

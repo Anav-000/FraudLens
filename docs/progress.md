@@ -537,3 +537,172 @@ User-executed manual checks confirmed:
 1. **Local Structural Analysis Only**: Local URL inspection evaluates the grammatical components of the submitted URL string. It does **not** evaluate whether the remote server exists, whether a domain is currently registered, who owns the domain, or whether the site hosts malware or phishing forms.
 2. **Planned External Reputation**: Live querying of external threat intelligence feeds (e.g. Google Safe Browsing, VirusTotal, WHOIS registration age) is planned for future milestones and is not performed.
 3. **No Safety Guarantee**: A URL with standard structure and a reputable-looking domain can still host malicious content. FraudLens does not label URLs "safe" or "verified" based on structural heuristics.
+
+
+---
+
+## Phase 4B: Optional Google Safe Browsing URL Reputation
+
+**Status**: Phase 4B Complete & Verified
+
+**Milestone Completion Date**: 2026-11-05
+
+### 1. Scope & Implementation Overview
+
+#### A. Backend Architecture & Safe Browsing Integration
+- **Endpoint**: `POST /api/v1/inspect/url/reputation`
+- **Provider & Protocol Versions**:
+  - **Verified Local Setup**: `SAFE_BROWSING_VERSION=v4` in `backend/.env`.
+  - **Safe Browsing v4 (Lookup API)**: Uses Google documented `POST /v4/threatMatches:find` JSON protocol. Returns `no_known_match` for the documented empty JSON object `{}`. Empty no-match responses return `expires_at=null` (no invented default cache duration) and are kept out of the backend cache so fresh queries remain up to date. Threat matches use provider-indicated per-match `cacheDuration`, and multi-threat matches are bounded by the earliest match expiry.
+    - **Safe Browsing v5 Fail-Closed Handling**: When Google Safe Browsing v5 returns a binary Protobuf response, the FraudLens reputation endpoint returns HTTP 200 with `status="unavailable"`, `error_code="MALFORMED_PROVIDER_RESPONSE"`, and `error_reason="unverified_binary_schema"`. The UI displays “Service Unavailable.”
+  - **Cache Key Version Isolation**: Backend cache keys are scoped by protocol version (`f"{version}:{checked_url}"`) so v4 and v5 lookups never reuse each other's cached responses.
+- **Configuration & Capabilities**:
+  - Controlled by `SAFE_BROWSING_API_KEY` (stored securely as `SecretStr` in `backend/app/core/config.py`) and `SAFE_BROWSING_VERSION` (`v4` or `v5`).
+  - Capabilities reporting (`GET /api/v1/capabilities`) truthfully reports `url_reputation: true` when `SAFE_BROWSING_API_KEY` is non-empty, and `false` when absent or empty.
+  - When unconfigured, endpoint returns HTTP 503 `SERVICE_UNAVAILABLE` with reason `SAFE_BROWSING_NOT_CONFIGURED` and actionable advice.
+  - Keep actual API keys and `.env` file contents strictly local; never log or commit credentials.
+- **Privacy & Pre-flight Sanitization**:
+  - Target URL fragments (`#...`) are stripped prior to external transmission to prevent leaking client-side state.
+  - Pre-flight destination host validation prevents SSRF or leaking internal topology: loopback, private, link-local, and reserved IP destinations are rejected with HTTP 422 `FORBIDDEN_DESTINATION`.
+  - Zero requests are sent to the target destination URL itself.
+- **Threat Categories & Responses**:
+  - Evaluates standard Safe Browsing threat categories: `MALWARE`, `SOCIAL_ENGINEERING`, `UNWANTED_SOFTWARE`, and `POTENTIALLY_HARMFUL_APPLICATION`.
+  - Qualified responses differentiate `threat_match` (with list of specific threat types) from `no_known_match`.
+  - Responses strictly forbid claiming that `no_known_match` means safe or legitimate.
+  - Mandatory Google attribution: `"Data provided by Google Safe Browsing."` and conspicuous non-guarantee advisory.
+- **TTL Cache & Freshness Safeguards**:
+  - In-memory TTL cache with positive and negative entry caching to respect provider quotas.
+  - Expiry contract: Cache entries strictly expire after provider-indicated `cacheDuration`; expired entries are evicted and return `None` (never reused as current).
+  - Maximum warning freshness capped at 30 minutes (`MAX_WARNING_FRESHNESS_SECONDS = 1800`) per Google Safe Browsing policies.
+  - `is_expired()` and `mark_stale_if_expired()` methods on response schemas flag displayed results as stale once their deadline passes.
+
+#### B. Frontend Implementation (`UrlInspector.tsx`)
+- **Explicit Separate Action & Unchecked Consent**:
+  - External reputation lookup is an independent, opt-in section separate from offline structural inspection.
+  - Requires explicit user consent via an unchecked checkbox (`"I consent to transmitting this destination URL to Google Safe Browsing..."`).
+  - Checkbox and action button are disabled if Safe Browsing is unconfigured on the backend or if input is empty.
+- **Pre-transmission URL Preview & Disclosure**:
+  - Displays a dedicated read-only preview of the exact URL string that will be transmitted (with fragments stripped).
+  - Clear privacy warning advising users never to submit URLs containing confidential credentials, tokens, or personal identifiers.
+- **Honest Five-State UI**:
+  1. *Unconfigured*: Clear, non-blocking callout explaining the feature is unconfigured on the server while offline inspection remains active.
+  2. *Loading*: Dedicated loading indicator (`"Checking Reputation..."`) with spinner and disabled controls.
+  3. *Threat Match*: High-visibility alert badge, list of reported threat types, and advisory notice.
+  4. *No Known Match*: Neutral outcome badge explaining no threat was listed, accompanied by mandatory non-guarantee disclaimer.
+  5. *Error State*: Standardized error callout with error code, reason, and advice.
+- **Dynamic Invalidation & Staleness**:
+  - Modifying the input URL immediately revokes consent (`consent = false`) and marks previous reputation results as stale.
+  - Automatically bounds freshness to the earlier of `expires_at` and `checked_at + 30 minutes`, and honors incoming `is_stale=true` immediately upon render.
+  - Time-driven automatic staleness timer (`setTimeout`) flags displayed results as expired after the deadline.
+  - Rechecks freshness on tab visibility/focus restoration (`visibilitychange` and `focus` events) so suspended browser tabs do not present expired findings as current.
+- **Late Response & Race Condition Discard**:
+  - Input edits, Reset, and new requests immediately `.abort()` in-flight requests and clear/replace controller references.
+  - State updates across `try` (success), `catch` (error), and `finally` are strictly guarded against obsolete requests (`ref.current === controller`), ensuring aborted requests resolving or rejecting late cannot disturb newer requests or restore results after Reset.
+- **Attribution & Non-Clickable Plain Text**:
+  - Conspicuous attribution with official link to Google Safe Browsing (`https://safebrowsing.google.com/`, `rel="noopener noreferrer"`).
+  - Clear architectural separation: official attribution link is distinguished from inspected, previewed, and checked target URLs, which are strictly selectable plain text (`break-all`), never clickable `<a>` links.
+- **DocumentExtractor act(...) Warning Fix**:
+  - Cleanly resolved React `act(...)` console warnings by wrapping asynchronous state updates and ensuring cancel/remove actions can execute without hanging in-flight extractions.
+
+---
+
+### 2. Actual Verification Results (Phase 4B Final)
+
+#### Verified Manual Browser Checks
+1. **Successful v4 No-Match Freshness**: With `SAFE_BROWSING_VERSION=v4`, navigating to `http://127.0.0.1:5173` and checking `example.com` displayed **"No Known Threat Matches"** with the correct non-guarantee disclaimer and Google attribution, **without an immediate expiry banner**.
+2. **Dynamic URL Modification Staleness**: Modifying the inspected URL in the input field immediately revoked consent and marked the previous Safe Browsing reputation finding as **stale**, prompting the user to re-consent and re-inspect before viewing a fresh assessment.
+
+
+| Suite | Scope | Target | Result | Status |
+|---|---|---|---|---|
+| **Backend Suite** | `pytest` | 362 tests across 13 test files (including 110 contract tests and 50 URL reputation tests): Configuration detection, Capabilities truthful reporting, URL fragment stripping, Private/loopback IP rejection, v4 Lookup threat match and empty-object parsing, v4 cache duration and earliest expiry bounds, v4/v5 cache key isolation, fail-closed v5 binary protobuf handling (`SERVICE_UNAVAILABLE`), Provider error handling, FastAPI dependency override isolation | **362 passed, 0 failed, 20 warnings** in 112.57s | **PASS (with 20 warnings)** |
+| **Frontend Tests** | `vitest` | 75 tests across 6 test suites (including 23 in `UrlInspector.test.tsx` and 20 in `App.test.tsx`): Heading & initial state, Independent inspection, Explicit consent opt-in, Exact preview with stripped fragments, Unconfigured server notice, Threat match with attribution and advisory, No known match with non-guarantee disclaimer, Server error callout, Consent invalidation on edit, Input edit staleness marking, Late response discard, 30-minute fake timer deadline staleness, Short expiry staleness, Incoming `is_stale=true` handling, Tab visibility/focus restoration freshness recheck, Official attribution link vs non-clickable URLs, Obsolete request race condition isolation, DocumentExtractor async resolution with zero act warnings, App full integration | **75 passed, 0 failed, 0 warnings** in 44.50s | **PASS** |
+| **Type Checking** | `tsc -b` | Strict TypeScript compilation across all frontend components, types, and test files | **0 errors** | **PASS** |
+| **Linting** | `eslint .` | ESLint v9 with strict TypeScript and React Hooks rules | **0 errors, 0 warnings** | **PASS** |
+| **Production Build** | `vite build` | Production bundle generation and minification | **Built in 1.82s** (218.59 kB JS, 26.02 kB CSS) | **PASS** |
+
+---
+
+### 3. Documented System Limitations (Phase 4B)
+1. **Threat List Coverage Limitations**: Safe Browsing lists are populated based on discovered malicious destinations. The absence of a threat match (`no_known_match`) does **not** guarantee a URL is benign or safe. Fast-flux domains, newly registered phishing links, and targeted spear-phishing sites may not yet be indexed.
+2. **Third-Party Data Transmission**: Initiating an external reputation check transmits the full URL (scheme, host, path, and query parameters) across the internet to Google APIs. Users must never check URLs containing sensitive session tokens, password-reset parameters, or personal confidential data.
+3. **No Live Destination Interaction**: FraudLens still does not connect to the target destination server. It does not resolve live DNS records, perform WHOIS domain age lookups, download destination HTML, or follow redirect chains.
+4. **Cache Freshness Bound**: Because website reputation statuses can change rapidly, cached results are bounded to at most 30 minutes, after which cached data is evicted and displayed results are flagged as stale.
+
+---
+
+## Phase 5: Case Builder, Evidence-Linked Summary, Report Export & Local Case Saving
+
+**Status**: Phase 5 Complete & Verified
+
+**Milestone Completion Date**: 2026-11-13
+
+### 1. Scope & Implementation Overview
+
+#### A. Operational Boundaries & Separation of Concerns
+- **Browser-Only Client Operations**:
+  - Case Builder workspace (aggregating evidence in React state).
+  - Evidence-Linked Case Summary (deterministic client-side synthesis).
+  - Plain-Text Case Report Download (client-side `.txt` generation via `Blob`).
+  - Opt-in Local Case Storage (browser `localStorage`).
+  - These operations run entirely inside the client browser and make zero requests to any server.
+- **Backend-Local Processing (No External Providers)**:
+  - Local URL Structure Inspection (`POST /api/v1/inspect/url`): processed on the local FraudLens backend without external DNS, socket, HTTP, or WHOIS calls.
+  - Local Screenshot OCR (`POST /api/v1/extract/screenshot`): processed on the local FraudLens backend using Tesseract OCR and Pillow; images are never sent over the internet.
+  - Local PDF Document Extraction (`POST /api/v1/extract/document`): processed on the local FraudLens backend using `pypdf` in an isolated worker subprocess with a 256 MiB Windows Job Object memory ceiling and a 20s kill/reap timeout; documents are never transmitted externally.
+- **External Cloud Provider Requests**:
+  - Suspicious Message Analysis (`POST /api/v1/analyze/text`): transmits message text to Google Gemini API (`gemini-3.5-flash-lite`) within `<UNTRUSTED_MESSAGE>` isolation delimiters with `store=False`.
+  - URL Threat Reputation (`POST /api/v1/inspect/url/reputation`): opt-in query transmitting sanitized URLs to Google Safe Browsing API (`v4` Lookup) requiring explicit unchecked consent. Local and special-use domains (such as `.invalid`) are rejected before external transmission.
+
+#### B. Case Builder & Evidence Management
+- **In-Memory Case Organization**: Cases are initialized in memory with a user-provided case name. Allows adding evidence from 4 distinct sources:
+  1. *Suspicious Message Analysis* (`text_analysis`): Stores submitted text, assessment badge, category, summary, verbatim quotes, uncertainties, and analysis basis.
+  2. *Extracted Text Content* (`extracted_text`): Stores local OCR (screenshot) or local PDF extraction content, file name, and review confirmation provenance.
+  3. *URL Structure Inspection* (`url_structure`): Stores submitted plain-text URL, destination hostname, PSL registrable domain, scheme, port, and structural observations.
+  4. *URL Threat Reputation* (`url_reputation`): Stores checked plain-text URL, Safe Browsing reputation outcome, threat categories, checked timestamp, provider expiry, attribution, and non-guarantee disclaimer.
+- **Evidence Deletion & Case Clearing**: Individual evidence items can be removed, and entire cases can be deleted with immediate UI state updates.
+- **Plain-Text Display Guarantees**: All submitted message texts, extracted texts, and inspected/checked URLs are strictly rendered as selectable plain text (never as clickable `<a>` links).
+
+#### C. Evidence-Linked Case Summary
+- **Deterministic Client-Side Synthesis**: Generates four structured sections from saved evidence in real time:
+  1. *Warning Signs*: Aggregates warning signs from message analysis and reputation matches, providing clickable anchor links jumping directly to the corresponding evidence card.
+  2. *Conflicting Findings*: Evaluates conflicts strictly when two findings make incompatible claims about the exact same subject under comparable conditions. Differing assessments of different messages are not conflicts. Safe Browsing threat match and no-match for the same URL do not conflict; lookups at different timestamps are categorized under *Observations Over Time*.
+  3. *What Remains Unknown*: Compiles unverified context, missing identity checks, and expired reputation results.
+  4. *Practical Verification Steps*: Suggests trusted, out-of-band verification steps (e.g. contacting official carriers, verifying sender phone numbers).
+
+#### D. Plain-Text Case Report Download
+- **Browser-Side UTF-8 Export**: Generates a clean `.txt` investigation report entirely in the browser memory using `Blob` and `URL.createObjectURL`.
+- **Zero Server Requests**: Report generation makes no server requests and triggers no storage modifications.
+- **Structure**: Includes case name, export timestamp, confidentiality notice, all 4 summary sections, and numbered evidence references with full plain text and Safe Browsing attribution/disclaimers. Disabled when the case has no evidence.
+
+#### E. Opt-In Local Case Storage
+- **In-Memory Default**: All cases remain in React memory by default and are cleared on page refresh.
+- **Opt-in "Save on This Device"**: Writes the active case to browser `localStorage` (`fraudlens_saved_case`) only after the user reviews and confirms an explicit data sensitivity and browser profile persistence disclosure.
+- **Safe Reopening & Overwrite Confirmation**: Reopening a saved case prompts for confirmation if active unsaved evidence exists. Saving prompts for confirmation if a saved case already exists.
+- **Independent Storage Deletion**: "Delete Saved Case" purges the stored copy from `localStorage` while leaving the open in-memory case intact.
+- **Schema Validation**: `validateSavedCase()` validates all fields and evidence payloads against strict type checks, rejecting corrupted or malformed data.
+- **Dynamic Freshness Recalculation**: `recalculateCaseFreshness()` re-evaluates reputation freshness against the current system time upon reopening.
+
+---
+
+### 2. Actual Verification Results (Phase 5 Final)
+
+| Suite | Scope | Target | Result | Status |
+|---|---|---|---|---|
+| **Backend Suite** | `pytest` | 362 tests across 13 test files (contract, router, OCR, PDF, URL inspection, and Safe Browsing) | **362 passed, 0 failed, 20 warnings** in 74.07s | **PASS** |
+| **Frontend Tests** | `vitest` | 120 tests across 10 test suites (including CaseBuilder, CaseSummary, CaseReport, CaseStorage, UrlInspector, DocumentExtractor, ScreenshotExtractor, AnalysisResultView, App, and api) | **120 passed, 0 failed** in 52.41s | **PASS** |
+| **Type Checking** | `tsc -b` | Strict TypeScript compilation across all frontend components, types, and test files | **0 errors** | **PASS** |
+| **Linting** | `eslint .` | ESLint v9 with strict TypeScript and React Hooks rules | **0 errors, 0 warnings** | **PASS** |
+| **Production Build** | `vite build` | Production bundle generation and minification | **Built in 1.48s** (278.93 kB JS, 30.42 kB CSS) | **PASS** |
+
+#### Test Environment & Connectivity Clarification
+- **Out-of-Band Gemini Verification**: `scripts.check_gemini` verifies live Google Gemini API connectivity and API credentials out-of-band using harmless synthetic prompts.
+- **Offline Automated Test Mocks**: Automated Safe Browsing tests across both backend (`backend/tests/test_safe_browsing.py`) and frontend (`frontend/src/__tests__/UrlInspector.test.tsx`) used offline mock transports and recorded fixtures. No live requests to Google Safe Browsing are made during automated test runs.
+
+
+---
+
+### 3. Documented System Limitations (Phase 5)
+1. **Single Saved Case**: In this version, local browser storage supports persisting one active case per browser profile.
+2. **Browser Storage Scope**: Opt-in saved cases are stored in browser `localStorage`. Clearing browser data or using private/incognito mode removes the saved case.
+3. **Offline Report Export**: Downloaded `.txt` reports are unencrypted plain-text files. Users are advised to store and transmit exported reports securely.

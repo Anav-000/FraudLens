@@ -143,3 +143,31 @@ export interface AnalysisErrorResponse {
   error?: AnalysisErrorDetail;
   detail?: AnalysisErrorDetail | string;
 }
+export type ReputationStatus =
+  | "threat_match"
+  | "no_known_match"
+  | "unavailable"
+  | "not_checked";
+
+export interface UrlReputationResponse {
+  status: ReputationStatus;
+  provider: string;
+  threat_types: string[];
+  checked_url: string;
+  checked_at: string;
+  expires_at?: string | null;
+  is_cached: boolean;
+  is_stale: boolean;
+  summary: string;
+  advisory: string;
+  attribution: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  error_reason?: string | null;
+  error_action?: string | null;
+}
+
+export interface UrlReputationRequest {
+  url: string;
+  consent: boolean;
+}
