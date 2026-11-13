@@ -628,3 +628,81 @@ User-executed manual checks confirmed:
 2. **Third-Party Data Transmission**: Initiating an external reputation check transmits the full URL (scheme, host, path, and query parameters) across the internet to Google APIs. Users must never check URLs containing sensitive session tokens, password-reset parameters, or personal confidential data.
 3. **No Live Destination Interaction**: FraudLens still does not connect to the target destination server. It does not resolve live DNS records, perform WHOIS domain age lookups, download destination HTML, or follow redirect chains.
 4. **Cache Freshness Bound**: Because website reputation statuses can change rapidly, cached results are bounded to at most 30 minutes, after which cached data is evicted and displayed results are flagged as stale.
+
+---
+
+## Phase 5: Case Builder, Evidence-Linked Summary, Report Export & Local Case Saving
+
+**Status**: Phase 5 Complete & Verified
+
+**Milestone Completion Date**: 2026-11-13
+
+### 1. Scope & Implementation Overview
+
+#### A. Operational Boundaries & Separation of Concerns
+- **Browser-Only Client Operations**:
+  - Case Builder workspace (aggregating evidence in React state).
+  - Evidence-Linked Case Summary (deterministic client-side synthesis).
+  - Plain-Text Case Report Download (client-side `.txt` generation via `Blob`).
+  - Opt-in Local Case Storage (browser `localStorage`).
+  - These operations run entirely inside the client browser and make zero requests to any server.
+- **Backend-Local Processing (No External Providers)**:
+  - Local URL Structure Inspection (`POST /api/v1/inspect/url`): processed on the local FraudLens backend without external DNS, socket, HTTP, or WHOIS calls.
+  - Local Screenshot OCR (`POST /api/v1/extract/screenshot`): processed on the local FraudLens backend using Tesseract OCR and Pillow; images are never sent over the internet.
+  - Local PDF Document Extraction (`POST /api/v1/extract/document`): processed on the local FraudLens backend using `pypdf` in an isolated worker subprocess with a 256 MiB Windows Job Object memory ceiling and a 20s kill/reap timeout; documents are never transmitted externally.
+- **External Cloud Provider Requests**:
+  - Suspicious Message Analysis (`POST /api/v1/analyze/text`): transmits message text to Google Gemini API (`gemini-3.5-flash-lite`) within `<UNTRUSTED_MESSAGE>` isolation delimiters with `store=False`.
+  - URL Threat Reputation (`POST /api/v1/inspect/url/reputation`): opt-in query transmitting sanitized URLs to Google Safe Browsing API (`v4` Lookup) requiring explicit unchecked consent. Local and special-use domains (such as `.invalid`) are rejected before external transmission.
+
+#### B. Case Builder & Evidence Management
+- **In-Memory Case Organization**: Cases are initialized in memory with a user-provided case name. Allows adding evidence from 4 distinct sources:
+  1. *Suspicious Message Analysis* (`text_analysis`): Stores submitted text, assessment badge, category, summary, verbatim quotes, uncertainties, and analysis basis.
+  2. *Extracted Text Content* (`extracted_text`): Stores local OCR (screenshot) or local PDF extraction content, file name, and review confirmation provenance.
+  3. *URL Structure Inspection* (`url_structure`): Stores submitted plain-text URL, destination hostname, PSL registrable domain, scheme, port, and structural observations.
+  4. *URL Threat Reputation* (`url_reputation`): Stores checked plain-text URL, Safe Browsing reputation outcome, threat categories, checked timestamp, provider expiry, attribution, and non-guarantee disclaimer.
+- **Evidence Deletion & Case Clearing**: Individual evidence items can be removed, and entire cases can be deleted with immediate UI state updates.
+- **Plain-Text Display Guarantees**: All submitted message texts, extracted texts, and inspected/checked URLs are strictly rendered as selectable plain text (never as clickable `<a>` links).
+
+#### C. Evidence-Linked Case Summary
+- **Deterministic Client-Side Synthesis**: Generates four structured sections from saved evidence in real time:
+  1. *Warning Signs*: Aggregates warning signs from message analysis and reputation matches, providing clickable anchor links jumping directly to the corresponding evidence card.
+  2. *Conflicting Findings*: Evaluates conflicts strictly when two findings make incompatible claims about the exact same subject under comparable conditions. Differing assessments of different messages are not conflicts. Safe Browsing threat match and no-match for the same URL do not conflict; lookups at different timestamps are categorized under *Observations Over Time*.
+  3. *What Remains Unknown*: Compiles unverified context, missing identity checks, and expired reputation results.
+  4. *Practical Verification Steps*: Suggests trusted, out-of-band verification steps (e.g. contacting official carriers, verifying sender phone numbers).
+
+#### D. Plain-Text Case Report Download
+- **Browser-Side UTF-8 Export**: Generates a clean `.txt` investigation report entirely in the browser memory using `Blob` and `URL.createObjectURL`.
+- **Zero Server Requests**: Report generation makes no server requests and triggers no storage modifications.
+- **Structure**: Includes case name, export timestamp, confidentiality notice, all 4 summary sections, and numbered evidence references with full plain text and Safe Browsing attribution/disclaimers. Disabled when the case has no evidence.
+
+#### E. Opt-In Local Case Storage
+- **In-Memory Default**: All cases remain in React memory by default and are cleared on page refresh.
+- **Opt-in "Save on This Device"**: Writes the active case to browser `localStorage` (`fraudlens_saved_case`) only after the user reviews and confirms an explicit data sensitivity and browser profile persistence disclosure.
+- **Safe Reopening & Overwrite Confirmation**: Reopening a saved case prompts for confirmation if active unsaved evidence exists. Saving prompts for confirmation if a saved case already exists.
+- **Independent Storage Deletion**: "Delete Saved Case" purges the stored copy from `localStorage` while leaving the open in-memory case intact.
+- **Schema Validation**: `validateSavedCase()` validates all fields and evidence payloads against strict type checks, rejecting corrupted or malformed data.
+- **Dynamic Freshness Recalculation**: `recalculateCaseFreshness()` re-evaluates reputation freshness against the current system time upon reopening.
+
+---
+
+### 2. Actual Verification Results (Phase 5 Final)
+
+| Suite | Scope | Target | Result | Status |
+|---|---|---|---|---|
+| **Backend Suite** | `pytest` | 362 tests across 13 test files (contract, router, OCR, PDF, URL inspection, and Safe Browsing) | **362 passed, 0 failed, 20 warnings** in 74.07s | **PASS** |
+| **Frontend Tests** | `vitest` | 120 tests across 10 test suites (including CaseBuilder, CaseSummary, CaseReport, CaseStorage, UrlInspector, DocumentExtractor, ScreenshotExtractor, AnalysisResultView, App, and api) | **120 passed, 0 failed** in 52.41s | **PASS** |
+| **Type Checking** | `tsc -b` | Strict TypeScript compilation across all frontend components, types, and test files | **0 errors** | **PASS** |
+| **Linting** | `eslint .` | ESLint v9 with strict TypeScript and React Hooks rules | **0 errors, 0 warnings** | **PASS** |
+| **Production Build** | `vite build` | Production bundle generation and minification | **Built in 1.48s** (278.93 kB JS, 30.42 kB CSS) | **PASS** |
+
+#### Test Environment & Connectivity Clarification
+- **Out-of-Band Gemini Verification**: `scripts.check_gemini` verifies live Google Gemini API connectivity and API credentials out-of-band using harmless synthetic prompts.
+- **Offline Automated Test Mocks**: Automated Safe Browsing tests across both backend (`backend/tests/test_safe_browsing.py`) and frontend (`frontend/src/__tests__/UrlInspector.test.tsx`) used offline mock transports and recorded fixtures. No live requests to Google Safe Browsing are made during automated test runs.
+
+
+---
+
+### 3. Documented System Limitations (Phase 5)
+1. **Single Saved Case**: In this version, local browser storage supports persisting one active case per browser profile.
+2. **Browser Storage Scope**: Opt-in saved cases are stored in browser `localStorage`. Clearing browser data or using private/incognito mode removes the saved case.
+3. **Offline Report Export**: Downloaded `.txt` reports are unencrypted plain-text files. Users are advised to store and transmit exported reports securely.
