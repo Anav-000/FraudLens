@@ -47,9 +47,21 @@ class Settings(BaseSettings):
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_allowed_origins(cls, value: Union[List[str], str]) -> List[str]:
+        default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+        parsed: List[str] = []
         if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+            parsed = [origin.strip() for origin in value.split(",") if origin.strip()]
+        elif isinstance(value, (list, set, tuple)):
+            parsed = [str(origin).strip() for origin in value if str(origin).strip()]
+        else:
+            return default_origins
+
+        # Ensure localhost development origins are preserved alongside production origins
+        merged = list(default_origins)
+        for origin in parsed:
+            if origin not in merged:
+                merged.append(origin)
+        return merged
 
     def is_ai_key_configured(self) -> bool:
         """

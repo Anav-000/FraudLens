@@ -136,6 +136,15 @@ def create_app() -> FastAPI:
     app.include_router(extract_router, prefix="/api/v1")
     app.include_router(inspect_router, prefix="/api/v1")
 
+    # Root health-check alias for load balancers and platform monitors
+    @app.get("/health", include_in_schema=False)
+    def root_health() -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "ok", "service": "fraudlens-api"},
+            headers={"Cache-Control": "no-store"},
+        )
+
     return app
 
 
