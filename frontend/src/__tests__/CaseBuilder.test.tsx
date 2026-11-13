@@ -373,4 +373,98 @@ describe("CaseBuilder Component", () => {
 
     expect(handleRemove).toHaveBeenCalledWith("item-to-remove");
   });
+
+  it("renders Case Summary Panel with evidence links targeting evidence card anchors", () => {
+    const activeCase: Case = {
+      id: "case-sum",
+      name: "Summary Test Case",
+      createdAt: new Date().toISOString(),
+      evidence: [
+        {
+          id: "ev-text-1",
+          sourceType: "text_analysis",
+          title: "Advance Fee Offer",
+          addedAt: new Date().toISOString(),
+          payload: {
+            sourceType: "text_analysis",
+            submittedText: "Pay upfront registration fee",
+            result: mockTextAnalysisResult,
+          },
+        },
+      ],
+    };
+
+    render(
+      <CaseBuilder
+        currentCase={activeCase}
+        onCreateCase={vi.fn()}
+        onDeleteCase={vi.fn()}
+        onRemoveEvidence={vi.fn()}
+      />
+    );
+
+    // Verify summary panel is rendered
+    expect(screen.getByTestId("case-summary-panel")).toBeInTheDocument();
+
+    // Verify warning sign links to #evidence-item-ev-text-1
+    const evidenceLinks = screen.getAllByRole("link", { name: /Evidence: Advance Fee Offer/i });
+    expect(evidenceLinks.length).toBeGreaterThanOrEqual(1);
+    expect(evidenceLinks[0]).toHaveAttribute("href", "#evidence-item-ev-text-1");
+
+    // Verify target card has matching id in the DOM
+    const targetCard = document.getElementById("evidence-item-ev-text-1");
+    expect(targetCard).not.toBeNull();
+  });
+
+  it("dynamically reflects evidence changes in Case Summary when items are removed", () => {
+    const item1: EvidenceItem = {
+      id: "ev-1",
+      sourceType: "text_analysis",
+      title: "Item 1 With Warnings",
+      addedAt: new Date().toISOString(),
+      payload: {
+        sourceType: "text_analysis",
+        submittedText: "Warning message",
+        result: mockTextAnalysisResult,
+      },
+    };
+
+    const caseWithOne: Case = {
+      id: "case-dyn",
+      name: "Dynamic Case",
+      createdAt: new Date().toISOString(),
+      evidence: [item1],
+    };
+
+    const { rerender } = render(
+      <CaseBuilder
+        currentCase={caseWithOne}
+        onCreateCase={vi.fn()}
+        onDeleteCase={vi.fn()}
+        onRemoveEvidence={vi.fn()}
+      />
+    );
+
+    // Initial state: summary shows warning sign
+    expect(screen.getAllByText("Advance Fee Requirement").length).toBeGreaterThanOrEqual(1);
+
+    // Rerender with empty evidence array (simulating item removal)
+    const caseEmpty: Case = {
+      ...caseWithOne,
+      evidence: [],
+    };
+
+    rerender(
+      <CaseBuilder
+        currentCase={caseEmpty}
+        onCreateCase={vi.fn()}
+        onDeleteCase={vi.fn()}
+        onRemoveEvidence={vi.fn()}
+      />
+    );
+
+    // Summary should now show empty state
+    expect(screen.getByTestId("case-summary-empty")).toBeInTheDocument();
+    expect(screen.queryByText("Advance Fee Requirement")).not.toBeInTheDocument();
+  });
 });

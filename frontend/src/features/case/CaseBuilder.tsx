@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Case, EvidenceItem, EvidencePayload, UrlReputationPayload } from "../../types/case";
+import { CaseSummaryPanel } from "./CaseSummaryPanel";
 
 const UrlReputationEvidenceView: React.FC<{ payload: UrlReputationPayload }> = ({ payload }) => {
   const { url, result, expires_at, checked_at, is_stale } = payload;
@@ -427,6 +428,9 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
             </div>
           </div>
 
+          {/* Evidence-Linked Case Summary Panel */}
+          <CaseSummaryPanel currentCase={currentCase} />
+
           {/* Evidence List */}
           <div className="space-y-4">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
@@ -448,8 +452,10 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
                 {currentCase.evidence.map((item) => (
                   <div
                     key={item.id}
+                    id={`evidence-item-${item.id}`}
                     data-testid={`evidence-item-${item.id}`}
-                    className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm space-y-3"
+                    className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm space-y-3 scroll-mt-6"
+                    tabIndex={-1}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
                       <div className="flex flex-wrap items-center gap-2">

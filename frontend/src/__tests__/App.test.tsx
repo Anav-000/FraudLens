@@ -1025,7 +1025,7 @@ describe("FraudLens App Component", () => {
     const addAnalysisToCaseBtn = screen.getByRole("button", { name: "Add to Case" });
     await user.click(addAnalysisToCaseBtn);
 
-    expect(screen.getByText(/1 evidence item/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/1 evidence item/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("evidence-message-text")).toHaveTextContent("Urgent: Your account is locked");
 
     // 3. Perform URL inspection and add to case
@@ -1041,7 +1041,7 @@ describe("FraudLens App Component", () => {
     const addStructureToCaseBtn = screen.getByRole("button", { name: "Add Structural Findings to Case" });
     await user.click(addStructureToCaseBtn);
 
-    expect(screen.getByText(/2 evidence items/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/2 evidence items/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("evidence-url-structure-plain")).toHaveTextContent("https://example.com/login");
 
     // 4. Remove one item
@@ -1053,7 +1053,7 @@ describe("FraudLens App Component", () => {
       await user.click(firstRemoveBtn);
     }
 
-    expect(screen.getByText(/1 evidence item/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/1 evidence item/i).length).toBeGreaterThanOrEqual(1);
 
     // 5. Delete the case
     const deleteCaseBtn = screen.getByRole("button", { name: /Delete Case/i });
