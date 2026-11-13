@@ -13,7 +13,11 @@ Guarantees:
 - Structured JSON output written to temporary output file; avoids unbounded pipe buffers.
 """
 import ctypes
-from ctypes import wintypes
+try:
+    from ctypes import wintypes
+except (ImportError, AttributeError):
+    wintypes = None  # type: ignore
+
 import json
 import os
 import sys
@@ -25,7 +29,7 @@ MAX_WORKER_RESULT_BYTES = 1024 * 1024  # 1 MiB worker JSON result ceiling
 DEFAULT_MEMORY_LIMIT_MB = 256  # 256 MiB per-worker virtual memory limit
 
 # Persistent module-level reference to keep Windows Job Object handle open for process lifetime
-_job_handle: Optional[wintypes.HANDLE] = None
+_job_handle: Optional[Any] = None
 
 
 def apply_memory_limit_windows(limit_mb: int = DEFAULT_MEMORY_LIMIT_MB) -> bool:
