@@ -1,41 +1,70 @@
-# FraudLens
+# 🛡️ FraudLens — Scam Evidence and Verification Workbench
 
-> “Spot the warning signs. Verify your next step.”
+<p align="center">
+  <strong>Spot the warning signs. Verify your next step.</strong>
+</p>
 
-**Author**: Arnav Kumar  
-**Project Type**: Full-Stack Defensive AI & Security Engineering Portfolio Project
-**Status**: Production-Ready MVP (Offline & Locally Verified)
-**Core Technologies**: React 18, TypeScript, TailwindCSS, Vite, FastAPI, Python 3.12, Google GenAI SDK (`gemini-3.5-flash-lite`), Google Safe Browsing API (v4 Lookup), Tesseract OCR, PyPDF.
+<p align="center">
+  Investigate suspicious messages, screenshots, PDFs, and URLs. Trace findings back to their evidence and export a case report.
+</p>
 
----
+<p align="center">
+  <a href="https://fraud-lens-two.vercel.app"><img src="https://img.shields.io/badge/Live%20Demo-Open%20FraudLens-0F766E?style=for-the-badge&amp;logo=vercel&amp;logoColor=white" alt="Open the FraudLens live demo" /></a>
+</p>
 
-## 1. Executive Summary & Mission
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&amp;logo=fastapi&amp;logoColor=white" alt="FastAPI backend" />
+  <img src="https://img.shields.io/badge/React-Frontend-61DAFB?style=for-the-badge&amp;logo=react&amp;logoColor=black" alt="React frontend" />
+  <img src="https://img.shields.io/badge/TypeScript-Frontend-3178C6?style=for-the-badge&amp;logo=typescript&amp;logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-Build%20Tool-646CFF?style=for-the-badge&amp;logo=vite&amp;logoColor=white" alt="Vite build tool" />
+</p>
 
-FraudLens is an open-source defensive decision-support workbench designed to help everyday users evaluate suspicious communications before sharing personal information, verifying sensitive credentials, or transferring money.
+> FraudLens is an educational portfolio project. Its findings help you decide what to verify before sharing sensitive information or sending money. Sender identity and destination safety require independent verification.
 
-When users encounter high-pressure job offers, unexpected delivery fee requests, account suspension notices, or unfamiliar URLs, FraudLens provides:
-- **Evidence-Grounded Warning Signs**: Identified psychological coercion tactics, urgency triggers, and advance-fee patterns grounded strictly in verbatim quotes from submitted text.
-- **Offline URL Structural Inspection**: Instant breakdown of destination hostnames, registrable domains (eTLD+1), credentials before `@`, and deceptive subdomains—executed on the local FraudLens backend without calling external providers or resolving remote DNS.
-- **Optional Google Safe Browsing Reputation**: On-demand query of Google Safe Browsing threat feeds, requiring explicit user consent, pre-flight destination sanitization, and strict fail-closed safety handling.
-- **Case Builder & Evidence Aggregation**: An in-memory investigation workspace where users can collect findings from text analysis, OCR/PDF extractions, and URL inspections into a unified case.
-- **Evidence-Linked Case Summary**: A deterministic synthesis panel highlighting warning signs, genuine conflicts, unknown factors, and practical offline verification steps.
-- **Plain-Text Case Report Export**: One-click download of a UTF-8 plain-text investigation report (`.txt`) generated directly in the browser.
-- **Opt-In Local Device Storage**: In-memory privacy by default with an optional, explicit "Save on This Device" workflow backed by browser `localStorage` and schema validation.
-- **Human-in-the-Loop Document & Screenshot Extraction**: Local OCR and PDF parsing engines that allow users to inspect, correct, and confirm extracted text before analysis.
+## 📌 Overview
 
----
+An unexpected delivery fee, an urgent account notice, or an advance-fee job offer can combine several clues across text, images, and links. FraudLens gives users one place to inspect those clues, record the supporting evidence, and identify what remains uncertain.
 
-## 2. Capabilities & Architecture: Operational Boundaries
+The React interface connects to a FastAPI backend for URL inspection, OCR, PDF extraction, and optional provider checks. Case Builder links findings to their sources and generates a plain-text report in the browser.
+
+**Workflow** · Submit evidence → Review findings → Build a case → Verify independently → Export a report
+
+## ✨ Highlights
+
+- **Evidence-grounded message analysis** identifies warning signs in English or Hindi and verifies each quoted passage against the submitted text.
+- **URL inspection** exposes the actual hostname, registrable domain, and structural warning signs without visiting the destination. Optional Safe Browsing checks require explicit consent.
+- **Reviewed OCR and PDF extraction** lets users edit extracted text before submitting it for analysis.
+- **Case Builder** groups evidence, distinguishes conflicts from observations made at different times, and lists practical verification steps.
+- **Browser-based case handling** provides in-memory cases, opt-in device storage, and UTF-8 report downloads.
+
+## 🖥️ Application Preview
+
+Open the [live FraudLens app](https://fraud-lens-two.vercel.app), inspect `https://example.com/` in **URL Structure Inspection**, and check that the destination hostname reads `example.com`. Create a case, add the structural findings, and download the report.
+
+The hosted frontend runs on **Vercel** and the FastAPI backend runs on **Render**. URL Structure Inspection was verified on the deployed site. Gemini analysis and Safe Browsing reputation checks are disabled on the public deployment and can be configured for the local walkthrough below.
+
+## 🏗️ System Architecture
+
+```mermaid
+flowchart LR
+    UI["React interface · Vercel"] --> API["FastAPI · Render"]
+    UI --> CASE["Case Builder · Browser"]
+    API --> LOCAL["URL parsing, OCR, and PDF extraction"]
+    API --> CLOUD["Optional Gemini and Safe Browsing"]
+```
+
+## Data Processing Boundaries
 
 FraudLens strictly separates browser-only client operations, backend-local processing, and external cloud provider requests:
 
 | Category | Capability | Execution Location | External Service Used | Execution & Network Scope |
 |---|---|---|---|---|
-| **External Cloud Services** | **Suspicious Message Analysis** | Backend (`FastAPI`) | **Google Gemini API** (`gemini-3.5-flash-lite`) | Transmits message text only within `<UNTRUSTED_MESSAGE>` prompt isolation delimiters. External search tools are disabled (`tools=None`), and interaction logging is disabled (`store=False`). |
+| **External Cloud Services** | **Suspicious Message Analysis** | Backend (`FastAPI`) | **Google Gemini API** (`gemini-3.5-flash-lite`) | Transmits message text only within `<UNTRUSTED_MESSAGE>` prompt isolation delimiters. External search tools are disabled (`tools=None`), and the app requests `store=False`. |
 | **External Cloud Services** | **URL Threat Reputation Check** | Backend (`FastAPI`) | **Google Safe Browsing** (`v4` Lookup API) | **Opt-in only**. Requires explicit user consent via an unchecked checkbox. Strips URL fragments (`#...`) before transmission and blocks private, loopback, and special-use domains. Never connects to the target website. |
 | **Backend-Local Processing** | **URL Structure Inspection** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses Python standard library and a bundled offline Public Suffix List snapshot (`tldextract`). Zero remote DNS queries, zero socket connections, and zero HTTP requests. |
-| **Backend-Local Processing** | **Screenshot Text Extraction** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses local Tesseract OCR and Pillow on the server. Images are never transmitted over the internet. Bounded by 5 MiB file size and 12 MP limits. |
-| **Backend-Local Processing** | **PDF Document Extraction** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses `pypdf` inside an isolated worker subprocess with a 256 MiB Windows Job Object memory ceiling and a 20-second kill/reap timeout. Max 10 pages and 10,000 characters. |
+| **Backend-Local Processing** | **Screenshot Text Extraction** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses local Tesseract OCR and Pillow on the server. Images are uploaded to the FraudLens backend and are processed there without an external provider. Bounded by 5 MiB file size and 12 MP limits. |
+| **Backend-Local Processing** | **PDF Document Extraction** | Backend (`FastAPI`) | **None** | **Executed on the local FraudLens backend without calling external providers**. Uses `pypdf` inside an isolated worker subprocess with a 256 MiB worker memory limit and a 20-second kill/reap timeout. Max 10 pages and 10,000 characters. |
 | **Browser-Only Operations** | **Case Builder Workspace** | Frontend (`React`) | **None** | **Browser-only operation (zero server network transmission)**. Evidence items are aggregated in client React state. Refreshing the browser clears in-memory state. No external analytics, telemetry, or server persistence. |
 | **Browser-Only Operations** | **Evidence-Linked Case Summary** | Frontend (`React`) | **None** | **Browser-only operation (zero server network transmission)**. Deterministic client-side rules synthesize warning signs, evaluate conflicts against strict criteria, compile unknowns, and suggest practical verification steps without API calls. |
 | **Browser-Only Operations** | **Plain-Text Report Download** | Frontend (`React`) | **None** | **Browser-only operation (zero server network transmission)**. Compiles a clean UTF-8 `.txt` report directly in the browser via `Blob`. Triggers a local file download without sending data to any backend or cloud service. |
@@ -43,9 +72,9 @@ FraudLens strictly separates browser-only client operations, backend-local proce
 
 ---
 
-## 3. End-to-End Demo Walkthrough (Fictional Suspicious Message)
+## 🔍 End-to-End Walkthrough
 
-This guided walkthrough demonstrates how a portfolio reviewer or investigator can use FraudLens to analyze an unsolicited, urgent SMS from initial intake to plain-text case report generation.
+Run this walkthrough locally with Gemini and Safe Browsing configured to follow a fictional delivery message from initial review to case export.
 
 > **Important**: All data used in this walkthrough is purely synthetic and fictional. Never submit live financial credentials, active passwords, or sensitive personal data.
 
@@ -243,7 +272,7 @@ END OF REPORT - FRAUDLENS
 
 ---
 
-## 4. Key Engineering Features & Defenses
+## 🔐 Engineering Decisions
 
 ### A. Defensive Prompt & AI Pipeline Isolation
 - **Payload Isolation**: Untrusted user text is strictly bounded within `<UNTRUSTED_MESSAGE>` payload delimiters.
@@ -254,14 +283,14 @@ END OF REPORT - FRAUDLENS
 - **Language Alignment**: The output `language` tag must match the requested language (`en` or `hi`).
 
 ### B. Local Screenshot Text Extraction (Tesseract OCR)
-- **Local Backend Processing (No External Providers)**: Screenshots are processed locally on the FraudLens backend using Tesseract OCR and Pillow (`PIL`). Images are **never sent to Google Gemini or external services**.
+- **Local Backend Processing (No External Providers)**: Screenshots are processed locally on the FraudLens backend using Tesseract OCR and Pillow (`PIL`). On the hosted app, images travel to the FraudLens backend over HTTPS. OCR runs on that backend.
 - **MIME & Decompression Bomb Protection**: Accepts strictly PNG and JPEG, verified via file headers. Caps decoded image size at 12 megapixels (`12,000,000` pixels) and file size at 5 MiB. Multi-frame GIFs, animated PNGs, and TIFFs are rejected.
 - **Subprocess Isolation**: 20-second execution timeout with process kill (`proc.kill()`) and child process reaping (`await proc.wait()`). Concurrency bounded by `asyncio.Semaphore(3)`.
 - **Human-in-the-Loop Confirmation**: Extracted text is presented in an editable review area with character counters. The user must review and check a confirmation box before text can be transferred to analysis. Any edit to the text immediately unchecks the box.
 
 ### C. Local PDF Document Extraction (`pypdf`)
 - **Local Backend Processing (No External Providers)**: PDF parsing executes on the FraudLens backend in an independent worker subprocess (`app.services.pdf_worker`) managed by `_SyncDocumentRunner`.
-- **Enforceable Memory Ceiling**: Enforces a 256 MiB virtual memory ceiling per worker process using Windows Job Objects before parsing untrusted PDF structures.
+- **Enforceable Memory Ceiling**: Sets a 256 MiB limit per worker before PDF parsing. Windows uses Job Objects to cap committed memory, and Linux uses `RLIMIT_AS` to cap virtual address space.
 - **Resource Limits**: Strict 10-page limit (`MAX_DOCUMENT_PAGES = 10`), 10,000-character extraction cap, and 20-second timeout with process kill and reaping.
 - **Security Protections**: Pure-Python reader does not execute PDF JavaScript, does not open embedded file attachments, does not follow external URIs, and does not render visual raster graphics.
 
@@ -291,7 +320,7 @@ END OF REPORT - FRAUDLENS
 
 ---
 
-## 5. Technology Stack & Dependencies
+## 🛠️ Tech Stack
 
 ### Backend
 - **Python**: 3.12+
@@ -313,12 +342,23 @@ END OF REPORT - FRAUDLENS
 
 ---
 
-## 6. Local Setup & Configuration (Windows PowerShell)
+## ⚙️ Run Locally
 
 > **Important**: Never paste API keys into terminal command lines or version-controlled files. Keep credentials strictly in `backend/.env`.
 
-### Step 1: Configure Environment Variables
-From the repository root in PowerShell:
+### Step 1: Install dependencies and configure the backend
+
+Use Python 3.12, Node.js with npm, and Git. In PowerShell:
+
+```powershell
+git clone https://github.com/Anav-000/FraudLens.git
+Set-Location FraudLens
+py -3.12 -m venv backend\.venv
+.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+npm --prefix frontend install
+```
+
+From the repository root:
 ```powershell
 if (-not (Test-Path backend\.env)) {
     Copy-Item backend\.env.example backend\.env
@@ -342,7 +382,7 @@ SAFE_BROWSING_API_KEY=YOUR_ACTUAL_SAFE_BROWSING_API_KEY_HERE
 ```
 Save (`Ctrl + S`) and close Notepad.
 
-*(Note: `backend/.env` is tracked in `.gitignore` and is never committed).*
+`backend/.env` is ignored by Git.
 
 ---
 
@@ -363,7 +403,7 @@ If you wish to test local screenshot OCR:
 ### Step 3: Run the Synthetic Smoke Test (CLI)
 Verify your Gemini API key and live model connectivity out-of-band using the safe synthetic test:
 ```powershell
-Set-Location D:\FraudLens\backend
+Set-Location backend
 .\.venv\Scripts\python.exe -m scripts.check_gemini
 ```
 
@@ -386,15 +426,17 @@ Connectivity check complete. No user evidence was submitted or retained.
 
 ### Step 4: Start the Applications Locally
 
+Open both terminals at the repository root.
+
 #### Terminal 1: Backend Server (FastAPI)
 ```powershell
-Set-Location D:\FraudLens\backend
+Set-Location backend
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 #### Terminal 2: Frontend Server (Vite)
 ```powershell
-Set-Location D:\FraudLens\frontend
+Set-Location frontend
 npm run dev
 ```
 
@@ -402,7 +444,7 @@ Open your browser to: **`http://127.0.0.1:5173`**
 
 ---
 
-## 7. Verification & Offline Test Suite Results
+## 🧪 Testing and Verification
 
 FraudLens includes an extensive offline test suite covering unit, contract, integration, and security boundaries.
 
@@ -410,11 +452,10 @@ FraudLens includes an extensive offline test suite covering unit, contract, inte
 
 ```powershell
 # 1. Run all backend tests offline (pytest)
-Set-Location D:\FraudLens
 .\backend\.venv\Scripts\python.exe -m pytest -c backend\pytest.ini backend\tests -v
 
 # 2. Run all frontend unit and integration tests (Vitest)
-Set-Location D:\FraudLens\frontend
+Set-Location frontend
 npm test
 
 # 3. Strict TypeScript type check
@@ -435,7 +476,7 @@ npm run build
 | **Frontend Suite (`vitest`)** | Components, integration, storage, and export tests | 120 tests across 10 test files | **120 passed, 0 failed** in ~52s | **PASS** |
 | **Type Checking (`tsc -b`)** | Strict TypeScript compilation | All components, utilities, and tests | **0 errors** | **PASS** |
 | **Linting (`eslint .`)** | Code style, hooks rules, and type safety | Entire frontend codebase | **0 errors, 0 warnings** | **PASS** |
-| **Production Build (`vite build`)** | Minified production bundle | `dist/` bundle generation | **Built in 1.48s** (252 kB JS, 33 kB CSS) | **PASS** |
+| **Production Build (`vite build`)** | Minified production bundle | `dist/` bundle generation | **Build passed** | **PASS** |
 
 ### Verified Manual Browser Checks
 1. **Successful v4 No-Match Freshness**: With `SAFE_BROWSING_VERSION=v4`, checking `example.com` in the browser displayed **"No Known Threat Matches"** with the Google Safe Browsing attribution and non-guarantee advisory, **without an immediate expiry banner**.
@@ -448,7 +489,7 @@ npm run build
 
 ---
 
-## 8. Security, Privacy & Safety Disclosures
+## Privacy and Limitations
 
 1. **Plain-Text URLs**: FraudLens strictly displays user-submitted URLs as plain text monospace strings. They are never rendered as clickable `<a>` links to prevent accidental navigation to malicious targets.
 2. **No Guarantee of Safety**: FraudLens makes clear that "No known threat match" and "No clear warning signs" do **not** guarantee that a message, sender, or destination link is legitimate. New or targeted phishing attacks may not yet be indexed.
@@ -459,7 +500,7 @@ npm run build
 
 ---
 
-## 9. Troubleshooting & FAQ
+## Troubleshooting
 
 ### 1. Backend Returns HTTP 503 `AI_CONFIGURATION_MISSING`
 - Verify that `backend\.env` exists and contains `AI_PROVIDER=gemini` and `AI_API_KEY=AIza...`.
@@ -482,8 +523,10 @@ npm run build
   ```
   Then set `VITE_API_BASE_URL=http://127.0.0.1:8001` in `frontend/.env`.
 
----
+## 👨‍💻 Author
 
-## 10. License
+**Arnav Kumar** · [GitHub](https://github.com/Anav-000)
+
+## License
 
 This project is developed for educational and portfolio demonstration purposes. All rights reserved. Google Safe Browsing and Google Gemini are trademarks of Google LLC.
