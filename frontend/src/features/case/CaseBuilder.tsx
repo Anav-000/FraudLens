@@ -2,6 +2,13 @@ import React, { useEffect, useState } from "react";
 import { Case, EvidenceItem, EvidencePayload, UrlReputationPayload } from "../../types/case";
 import { CaseSummaryPanel } from "./CaseSummaryPanel";
 import { downloadCaseReport } from "./caseReportUtils";
+import {
+  deleteCaseFromStorage,
+  getSavedCaseMeta,
+  loadCaseFromStorage,
+  saveCaseToStorage,
+  SavedCaseMeta,
+} from "./caseStorage";
 
 const UrlReputationEvidenceView: React.FC<{ payload: UrlReputationPayload }> = ({ payload }) => {
   const { url, result, expires_at, checked_at, is_stale } = payload;
@@ -115,6 +122,7 @@ export interface CaseBuilderProps {
   onCreateCase: (name: string) => void;
   onDeleteCase: () => void;
   onRemoveEvidence: (itemId: string) => void;
+  onReopenCase?: (savedCase: Case) => void;
 }
 
 export const CaseBuilder: React.FC<CaseBuilderProps> = ({
@@ -122,9 +130,92 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
   onCreateCase,
   onDeleteCase,
   onRemoveEvidence,
+  onReopenCase,
 }) => {
   const [caseNameInput, setCaseNameInput] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Local device storage state
+  const [savedCaseMeta, setSavedCaseMeta] = useState<SavedCaseMeta>(() => getSavedCaseMeta());
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [storageStatus, setStorageStatus] = useState<string | null>(null);
+
+  // Confirmation dialog states
+  const [isConfirmingSave, setIsConfirmingSave] = useState(false);
+  const [isConfirmingReopen, setIsConfirmingReopen] = useState(false);
+  const [isConfirmingDeleteSaved, setIsConfirmingDeleteSaved] = useState(false);
+
+  const handleSaveClick = () => {
+    setStorageError(null);
+    setStorageStatus(null);
+    setIsConfirmingReopen(false);
+    setIsConfirmingDeleteSaved(false);
+    setIsConfirmingSave(true);
+  };
+
+  const executeSave = () => {
+    setIsConfirmingSave(false);
+    if (!currentCase) return;
+    const res = saveCaseToStorage(currentCase);
+    if (res.success) {
+      setStorageStatus("Case saved on this device. It will remain in this browser profile.");
+      setStorageError(null);
+      setSavedCaseMeta(getSavedCaseMeta());
+    } else {
+      setStorageError(res.error || "Unable to save case on this device.");
+    }
+  };
+
+  const handleReopenClick = () => {
+    setStorageError(null);
+    setStorageStatus(null);
+    setIsConfirmingSave(false);
+    setIsConfirmingDeleteSaved(false);
+    if (currentCase && currentCase.evidence.length > 0) {
+      setIsConfirmingReopen(true);
+    } else {
+      executeReopen();
+    }
+  };
+
+  const executeReopen = () => {
+    setIsConfirmingReopen(false);
+    const res = loadCaseFromStorage();
+    if (res.case) {
+      if (onReopenCase) {
+        onReopenCase(res.case);
+      }
+      setStorageStatus(`Reopened saved case: "${res.case.name}".`);
+      setStorageError(null);
+      setSavedCaseMeta(getSavedCaseMeta());
+    } else if (res.error) {
+      setStorageError(res.error);
+    }
+  };
+
+  const handleDeleteSavedClick = () => {
+    setStorageError(null);
+    setStorageStatus(null);
+    setIsConfirmingSave(false);
+    setIsConfirmingReopen(false);
+    setIsConfirmingDeleteSaved(true);
+  };
+
+  const executeDeleteSaved = () => {
+    setIsConfirmingDeleteSaved(false);
+    const res = deleteCaseFromStorage();
+    if (res.success) {
+      setSavedCaseMeta(getSavedCaseMeta());
+      setStorageStatus(
+        currentCase
+          ? "The saved copy was deleted from this device. Your active in-memory case remains open."
+          : "The saved case was deleted from this device."
+      );
+      setStorageError(null);
+    } else {
+      setStorageError(res.error || "Unable to delete saved case.");
+    }
+  };
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -360,6 +451,167 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
         )}
       </div>
 
+      {/* Storage Error Banner */}
+      {storageError && (
+        <div
+          data-testid="case-storage-error-banner"
+          role="alert"
+          className="rounded-lg bg-red-50 border border-red-200 p-3.5 text-xs text-red-900 flex items-start justify-between gap-2"
+        >
+          <div className="flex items-start gap-2">
+            <span aria-hidden="true" className="shrink-0 font-bold">⚠️</span>
+            <p className="leading-relaxed">{storageError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStorageError(null)}
+            className="text-red-700 hover:text-red-900 font-bold px-1 text-sm shrink-0"
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Storage Success Status Banner */}
+      {storageStatus && (
+        <div
+          data-testid="case-storage-status-banner"
+          role="status"
+          className="rounded-lg bg-emerald-50 border border-emerald-200 p-3.5 text-xs text-emerald-900 flex items-start justify-between gap-2"
+        >
+          <div className="flex items-start gap-2">
+            <span aria-hidden="true" className="shrink-0 font-bold">✓</span>
+            <p className="leading-relaxed">{storageStatus}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStorageStatus(null)}
+            className="text-emerald-700 hover:text-emerald-900 font-bold px-1 text-sm shrink-0"
+            aria-label="Dismiss status message"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Confirmation Dialog: Save Case on This Device */}
+      {isConfirmingSave && (
+        <div
+          data-testid="save-case-confirm-dialog"
+          role="dialog"
+          aria-labelledby="save-confirm-heading"
+          className="rounded-lg border-2 border-teal-500 bg-teal-50/90 p-4 space-y-3"
+        >
+          <h4 id="save-confirm-heading" className="text-xs font-bold uppercase tracking-wider text-teal-900">
+            Save Case on This Device
+          </h4>
+          <p className="text-xs text-slate-800 leading-relaxed">
+            This case and its evidence may contain sensitive personal or financial information.
+            Saving will store it in this browser profile (localStorage) on this device, where it will remain accessible after refreshing the page.
+          </p>
+          {savedCaseMeta.exists && (
+            <p className="text-xs font-semibold text-amber-900 bg-amber-100/70 border border-amber-300 p-2 rounded">
+              Note: A case (&ldquo;{savedCaseMeta.name}&rdquo;) is already saved on this device. Saving will replace it.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              data-testid="confirm-save-case-btn"
+              onClick={executeSave}
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            >
+              {savedCaseMeta.exists ? "Confirm & Replace Saved Case" : "Confirm & Save on This Device"}
+            </button>
+            <button
+              type="button"
+              data-testid="cancel-save-case-btn"
+              onClick={() => setIsConfirmingSave(false)}
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog: Reopen Saved Case (Discard Unsaved Work) */}
+      {isConfirmingReopen && (
+        <div
+          data-testid="reopen-case-confirm-dialog"
+          role="dialog"
+          aria-labelledby="reopen-confirm-heading"
+          className="rounded-lg border-2 border-amber-500 bg-amber-50/90 p-4 space-y-3"
+        >
+          <h4 id="reopen-confirm-heading" className="text-xs font-bold uppercase tracking-wider text-amber-950">
+            Discard Unsaved Work &amp; Reopen?
+          </h4>
+          <p className="text-xs text-slate-800 leading-relaxed">
+            Reopening the saved case (&ldquo;{savedCaseMeta.name}&rdquo;) will replace your current active case
+            (&ldquo;{currentCase?.name}&rdquo;). Any unsaved evidence in the active case will be discarded.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              data-testid="confirm-reopen-case-btn"
+              onClick={executeReopen}
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              Discard Unsaved &amp; Reopen
+            </button>
+            <button
+              type="button"
+              data-testid="cancel-reopen-case-btn"
+              onClick={() => setIsConfirmingReopen(false)}
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog: Delete Saved Case */}
+      {isConfirmingDeleteSaved && (
+        <div
+          data-testid="delete-saved-case-confirm-dialog"
+          role="dialog"
+          aria-labelledby="delete-saved-confirm-heading"
+          className="rounded-lg border-2 border-red-400 bg-red-50/90 p-4 space-y-3"
+        >
+          <h4 id="delete-saved-confirm-heading" className="text-xs font-bold uppercase tracking-wider text-red-950">
+            Delete Saved Case From Device?
+          </h4>
+          <p className="text-xs text-slate-800 leading-relaxed">
+            Are you sure you want to delete the saved copy of &ldquo;{savedCaseMeta.name}&rdquo; from this device?
+          </p>
+          <p className="text-xs font-medium text-slate-700">
+            {currentCase
+              ? "Your open in-memory case will remain open until you delete it or refresh the page."
+              : "No case is currently open in memory."}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              data-testid="confirm-delete-saved-btn"
+              onClick={executeDeleteSaved}
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-red-700 hover:bg-red-800 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            >
+              Confirm Delete Saved Case
+            </button>
+            <button
+              type="button"
+              data-testid="cancel-delete-saved-btn"
+              onClick={() => setIsConfirmingDeleteSaved(false)}
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Case In-Memory Warning */}
       <div
         role="status"
@@ -370,44 +622,83 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
           <span>In-Memory Storage Only</span>
         </div>
         <p className="text-blue-800 leading-relaxed">
-          Cases and evidence are held in browser memory only. <strong>Refreshing or closing this page clears all case data.</strong> Saving evidence does not make any network requests.
+          Cases and evidence are held in browser memory only by default. <strong>Refreshing or closing this page clears all case data</strong> unless you save it on this device. You can opt-in to save this case on this device using the &ldquo;Save on This Device&rdquo; button. Saving and reopening use local browser storage only; no network requests are made.
         </p>
       </div>
 
       {/* No Active Case: Creation Form */}
       {!currentCase ? (
-        <form onSubmit={handleCreateSubmit} className="space-y-4 max-w-lg">
-          <div className="space-y-1.5">
-            <label htmlFor="case-name-input" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Create a New Case
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="case-name-input"
-                type="text"
-                value={caseNameInput}
-                onChange={(e) => {
-                  setCaseNameInput(e.target.value);
-                  if (validationError) setValidationError(null);
-                }}
-                placeholder="e.g., Suspicious Telegram Job Offer"
-                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-colors shrink-0"
-              >
-                Create Case
-              </button>
+        <div className="space-y-6">
+          {savedCaseMeta.exists && (
+            <div
+              data-testid="saved-case-restore-card"
+              className="p-4 bg-teal-50/70 border border-teal-200 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+            >
+              <div className="space-y-0.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-teal-800 block">
+                  Saved Case on This Device
+                </span>
+                <h4 className="text-sm font-bold text-slate-900">
+                  {savedCaseMeta.name} ({savedCaseMeta.evidenceCount || 0} evidence item{savedCaseMeta.evidenceCount === 1 ? "" : "s"})
+                </h4>
+                <p className="text-[11px] text-slate-600">
+                  Stored in this browser profile. Click Reopen to restore and continue your investigation.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="reopen-saved-case-btn"
+                  onClick={handleReopenClick}
+                  className="px-3 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-colors"
+                >
+                  Reopen Saved Case
+                </button>
+                <button
+                  type="button"
+                  data-testid="delete-saved-case-btn"
+                  onClick={handleDeleteSavedClick}
+                  className="px-3 py-1.5 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+                >
+                  Delete Saved Case
+                </button>
+              </div>
             </div>
-            {validationError && (
-              <p className="text-xs text-red-600 font-medium">{validationError}</p>
-            )}
-          </div>
-          <p className="text-[11px] text-slate-500">
-            Give your case a descriptive name to start collecting evidence from message analysis, extracted text, and URL inspections.
-          </p>
-        </form>
+          )}
+
+          <form onSubmit={handleCreateSubmit} className="space-y-4 max-w-lg">
+            <div className="space-y-1.5">
+              <label htmlFor="case-name-input" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Create a New Case
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="case-name-input"
+                  type="text"
+                  value={caseNameInput}
+                  onChange={(e) => {
+                    setCaseNameInput(e.target.value);
+                    if (validationError) setValidationError(null);
+                  }}
+                  placeholder="e.g., Suspicious Telegram Job Offer"
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-colors shrink-0"
+                >
+                  Create Case
+                </button>
+              </div>
+              {validationError && (
+                <p className="text-xs text-red-600 font-medium">{validationError}</p>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Give your case a descriptive name to start collecting evidence from message analysis, extracted text, and URL inspections.
+            </p>
+          </form>
+        </div>
       ) : (
         /* Active Case View */
         <div className="space-y-6">
@@ -428,6 +719,36 @@ export const CaseBuilder: React.FC<CaseBuilderProps> = ({
               <span className="text-xs font-semibold text-slate-700 bg-white px-3 py-1.5 rounded border border-slate-200">
                 {currentCase.evidence.length} evidence item{currentCase.evidence.length === 1 ? "" : "s"}
               </span>
+              <button
+                type="button"
+                data-testid="save-case-device-btn"
+                onClick={handleSaveClick}
+                className="px-3 py-1.5 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+              >
+                Save on This Device
+              </button>
+              {savedCaseMeta.exists && (
+                <>
+                  <button
+                    type="button"
+                    data-testid="reopen-saved-case-btn"
+                    onClick={handleReopenClick}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    title={`Reopen saved case: "${savedCaseMeta.name}"`}
+                  >
+                    Reopen Saved Case
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="delete-saved-case-btn"
+                    onClick={handleDeleteSavedClick}
+                    className="px-3 py-1.5 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+                    title="Delete the stored copy from this device"
+                  >
+                    Delete Saved Case
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 data-testid="download-case-report-btn"

@@ -197,6 +197,10 @@ export const App: React.FC = () => {
     setActiveCase(null);
   };
 
+  const handleReopenCase = (reopenedCase: Case) => {
+    setActiveCase(reopenedCase);
+  };
+
   const handleRemoveEvidence = (itemId: string) => {
     setActiveCase((prev) => {
       if (!prev) return null;
@@ -358,6 +362,7 @@ export const App: React.FC = () => {
           onCreateCase={handleCreateCase}
           onDeleteCase={handleDeleteCase}
           onRemoveEvidence={handleRemoveEvidence}
+          onReopenCase={handleReopenCase}
         />
 
         {/* Phase 3A: Screenshot Text Extraction (Local OCR) */}
